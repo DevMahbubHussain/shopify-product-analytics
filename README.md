@@ -233,14 +233,3 @@ This repository serves as a boilerplate for building any Shopify application req
 4. Implement your domain DTOs in `backend/app/DTOs`.
 5. Connect your App Bridge views in `shopify-app/app/routes/`.
 
----
-
-## 7. Delivery Roadmap
-
-- [x] **Step 1: Foundation & S2S Trust Boundary** (Colima, Docker Compose, PostgreSQL 16, Redis 7, S2S HMAC, Pest tests)
-- [ ] **Step 2: Database Schema & Ingestion Pipeline** (Idempotent webhooks, product & order models, DTOs, Pest tests)
-- [ ] **Step 3: Shopify Gateway & OAuth Flow** (Session tokens, App Bridge, GraphQL client, webhook dispatch)
-- [ ] **Step 4: Historical Data Backfill & Aggregation Engine** (GraphQL bulk queries, Redis queues, rollups)
-- [ ] **Step 5: Analytics Query Engine & DTOs** (Product metrics API, variant velocity, filtering, caching)
-- [ ] **Step 6: Shopify Polaris Analytics Dashboard** (Summary cards, date filters, product datatable, charts)
-- [ ] **Step 7: Production Hardening, Rate Limiting & Billing** (Shopify App Billing API, rate limits, QC run)
