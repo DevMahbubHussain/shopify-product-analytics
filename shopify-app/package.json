@@ -1,0 +1,24 @@
+{
+  "name": "shopify-product-analytics-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch app/index.ts",
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "tsx --test tests/s2sHandshake.test.ts"
+  },
+  "dependencies": {
+    "@shopify/polaris": "^13.9.0",
+    "@shopify/shopify-api": "^11.5.0",
+    "@shopify/shopify-app-react-router": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "optionalDependencies": {
+    "@esbuild/linux-arm64": "^0.28.2"
+  }
+}

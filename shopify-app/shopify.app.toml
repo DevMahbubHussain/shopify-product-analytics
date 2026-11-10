@@ -1,0 +1,23 @@
+# Shopify App Configuration
+# Pinned API version: 2024-10 (stable)
+
+client_id = ""
+name = "Shopify Product Analytics"
+handle = "shopify-product-analytics"
+application_url = "http://localhost:3000"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,read_orders"
+
+[auth]
+redirect_urls = [
+  "http://localhost:3000/auth/callback",
+  "http://localhost:3000/auth/shopify/callback"
+]
+
+[webhooks]
+api_version = "2024-10"
+
+[pos]
+embedded = false
