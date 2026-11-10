@@ -1,0 +1,73 @@
+# Local PRD & Specifications
+PRD/
+
+# Operating System
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment and local configs
+.env
+.env.*
+!.env.example
+*.local
+
+# Node / Shopify App (React Router, Polaris)
+node_modules/
+dist/
+build/
+.cache/
+.shopify/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-debug.log*
+
+# PHP / Laravel Backend
+vendor/
+backend/vendor/
+bootstrap/cache/
+backend/bootstrap/cache/
+storage/*.key
+backend/storage/*.key
+storage/app/*
+!storage/app/.gitignore
+backend/storage/app/*
+!backend/storage/app/.gitignore
+storage/framework/cache/*
+!storage/framework/cache/.gitignore
+backend/storage/framework/cache/*
+!backend/storage/framework/cache/.gitignore
+storage/framework/sessions/*
+!storage/framework/sessions/.gitignore
+backend/storage/framework/sessions/*
+!backend/storage/framework/sessions/.gitignore
+storage/framework/testing/*
+!storage/framework/testing/.gitignore
+backend/storage/framework/testing/*
+!backend/storage/framework/testing/.gitignore
+storage/framework/views/*
+!storage/framework/views/.gitignore
+backend/storage/framework/views/*
+!backend/storage/framework/views/.gitignore
+storage/logs/*
+!storage/logs/.gitignore
+backend/storage/logs/*
+!backend/storage/logs/.gitignore
+.phpunit.result.cache
+
+# IDEs & Editors
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# Coverage / Reports
+coverage/
