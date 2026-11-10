@@ -128,6 +128,14 @@ The Laravel backend must strictly implement the recurring cross-cutting patterns
 - **Real Database Testing:** Never mock database queries when calculating metrics; run Pest tests against real PostgreSQL in Docker using `RefreshDatabase`.
 - **Playwright for E2E:** End-to-end testing of the complete merchant journey (App Bridge embedded UI, installation, date filters, reports) is handled via Playwright on a development store.
 
+### C14. Mandatory DTOs for Laravel REST APIs (Strict Data Contracts)
+When authoring or consuming any REST API endpoint in Laravel (both private S2S ingestion `/internal/v1/*` and analytics `/api/v1/*`):
+- **Always Use Typed DTOs:** Never pass loose associative arrays, raw request payloads (`$request->all()`), or untyped collections into domain services, pipelines, or background queue jobs.
+- **FormRequest to DTO Translation:** HTTP requests must be validated using dedicated `FormRequest` classes and immediately mapped into typed, immutable DTOs (e.g. `$request->toDto()`).
+- **Immutable & Readonly:** DTOs must be implemented as `readonly class` (PHP 8.2+) with typed constructor property promotion and explicit types on every property.
+- **Predictable Factory Methods:** DTOs must provide strict, static factory methods (e.g. `fromRequest(FormRequest $request): self`, `fromArray(array $data): self`).
+- **Consistent Response Contracts:** All outbound API responses must pass through typed Laravel API Resource classes or Response DTOs to ensure frontend contracts are guaranteed and internal database attributes are never leaked.
+
 ---
 
 ## 2. Environment & Commands Reference
