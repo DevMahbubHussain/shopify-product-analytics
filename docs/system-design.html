@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shopify Product Analytics — System Design & Architecture Specification</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-subtle: #1a2234;
+      --border: #243048;
+      --border-accent: #3b82f6;
+      --text: #f3f4f6;
+      --text-muted: #94a3b8;
+      --text-subtle: #64748b;
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.15);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.12);
+      --amber: #f59e0b;
+      --purple: #a855f7;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      padding: 0;
+      margin: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Navigation */
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(9, 13, 22, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: #fff;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 20px;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      transition: color 0.15s ease;
+    }
+
+    .nav-links a:hover {
+      color: var(--accent);
+    }
+
+    /* Layout */
+    .container {
+      max-width: 1340px;
+      margin: 0 auto;
+      padding: 40px 32px 100px;
+    }
+
+    /* Header Section */
+    .hero {
+      margin-bottom: 48px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .meta-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+
+    .hero h1 {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      color: #fff;
+      margin-bottom: 12px;
+    }
+
+    .hero p {
+      font-size: 16px;
+      color: var(--text-muted);
+      max-width: 860px;
+    }
+
+    /* Section Styling */
+    section {
+      margin-bottom: 64px;
+    }
+
+    .section-header {
+      margin-bottom: 24px;
+    }
+
+    .section-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* Editorial Diagram Canvas */
+    .diagram-frame {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px;
+      position: relative;
+      overflow-x: auto;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .diagram-frame::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border-accent), transparent);
+      opacity: 0.4;
+    }
+
+    .diagram-caption {
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-subtle);
+      margin-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* SVG Diagram Enhancements */
+    svg {
+      display: block;
+      margin: 0 auto;
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* Tables & Schemas */
+    .db-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 24px;
+      margin-top: 20px;
+    }
+
+    .db-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      font-family: var(--font-mono);
+    }
+
+    .db-card-header {
+      background: var(--card-subtle);
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .db-table-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #38bdf8;
+    }
+
+    .db-table-badge {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      color: #7dd3fc;
+    }
+
+    .db-table-rows {
+      padding: 12px 16px;
+      font-size: 12px;
+    }
+
+    .db-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(36, 48, 72, 0.5);
+    }
+
+    .db-row:last-child {
+      border-bottom: none;
+    }
+
+    .db-col-name {
+      color: #e2e8f0;
+      font-weight: 600;
+    }
+
+    .db-col-key {
+      color: #f59e0b;
+      margin-left: 6px;
+      font-size: 10px;
+    }
+
+    .db-col-type {
+      color: #94a3b8;
+    }
+
+    .db-index-box {
+      background: #0b1120;
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      font-size: 11px;
+      color: #34d399;
+    }
+
+    /* Key Callout Boxes */
+    .callout {
+      background: rgba(16, 185, 129, 0.05);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      border-left: 4px solid var(--green);
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin-top: 20px;
+      font-size: 14px;
+    }
+
+    .callout-title {
+      font-weight: 700;
+      color: var(--green);
+      margin-bottom: 4px;
+    }
+
+    .callout p {
+      color: var(--text-muted);
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header class="top-nav">
+    <div class="brand">
+      <span class="brand-badge">Shopify Embedded</span>
+      <span class="brand-title">Product Analytics Architecture</span>
+    </div>
+    <nav class="nav-links">
+      <a href="#usecases">Use Cases</a>
+      <a href="#hld">System Topology (HLD)</a>
+      <a href="#pipeline">Ingestion Pipeline (LLD)</a>
+      <a href="#database">Database & ERD</a>
+      <a href="#sequence">Sequence Flows</a>
+      <a href="#safeguards">Performance Rules</a>
+    </nav>
+  </header>
+
+  <main class="container">
+
+    <!-- Hero Header -->
+    <div class="hero">
+      <div class="meta-tag">
+        <span>ARCH-SPEC-V1.0</span> • <span>Shopify GraphQL Admin API 2024-10+</span> • <span>Laravel REST API</span> • <span>PostgreSQL 16</span>
+      </div>
+      <h1>System Architecture & Low-Level Design Specification</h1>
+      <p>
+        Architectural blueprint for an embedded Shopify analytics application. Follows a decoupled multi-tier topology (React Router for edge Shopify session/token ownership + Laravel for multi-tenant aggregation & PostgreSQL storage), engineered according to PlanetScale database standards and editorial technical diagramming principles.
+      </p>
+    </div>
+
+    <!-- SECTION 1: USE CASE MODEL -->
+    <section id="usecases">
+      <div class="section-header">
+        <h2 class="section-title">1. Actor & Use Case Model</h2>
+        <p class="section-desc">Formal boundary of interactions between Merchant, Shopify Platform, React Router Gateway, and Laravel Data Engine.</p>
+      </div>
+
+      <div class="diagram-frame">
+        <svg viewBox="0 0 1000 480" width="1000" height="480" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#64748b"/>
+            </marker>
+          </defs>
+
+          <!-- Boundary: System Box -->
+          <rect x="230" y="20" width="540" height="440" rx="10" fill="#0d1526" stroke="#1e293b" stroke-width="1.5" stroke-dasharray="4 4"/>
+          <text x="250" y="48" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#38bdf8" letter-spacing="1">SYSTEM BOUNDARY: SHOPIFY PRODUCT ANALYTICS</text>
+
+          <!-- Actor 1: Merchant -->
+          <g transform="translate(60, 180)">
+            <circle cx="40" cy="24" r="16" fill="#1e293b" stroke="#38bdf8" stroke-width="2"/>
+            <line x1="40" y1="40" x2="40" y2="80" stroke="#38bdf8" stroke-width="2"/>
+            <line x1="20" y1="55" x2="60" y2="55" stroke="#38bdf8" stroke-width="2"/>
+            <line x1="40" y1="80" x2="20" y2="120" stroke="#38bdf8" stroke-width="2"/>
+            <line x1="40" y1="80" x2="60" y2="120" stroke="#38bdf8" stroke-width="2"/>
+            <text x="40" y="145" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="13" font-weight="600" fill="#f8fafc">Shopify Merchant</text>
+          </g>
+
+          <!-- Actor 2: Shopify Platform -->
+          <g transform="translate(860, 180)">
+            <rect x="0" y="20" width="80" height="70" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+            <path d="M 25 35 L 55 35 L 55 75 L 25 75 Z" fill="none" stroke="#10b981" stroke-width="1.5"/>
+            <path d="M 40 25 L 50 35 L 30 35 Z" fill="#10b981"/>
+            <text x="40" y="115" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f8fafc">Shopify Platform</text>
+            <text x="40" y="132" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10" fill="#94a3b8">(OAuth/Webhooks)</text>
+          </g>
+
+          <!-- Use Cases (Pills) -->
+          <!-- UC1 -->
+          <rect x="280" y="75" width="210" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="385" y="101" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-01: Install App & OAuth Handshake</text>
+
+          <!-- UC2 -->
+          <rect x="280" y="135" width="210" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="385" y="161" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-02: Harvest 60-Day History</text>
+
+          <!-- UC3 -->
+          <rect x="520" y="135" width="220" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="630" y="161" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-03: Realtime Webhook Ingestion</text>
+
+          <!-- UC4 -->
+          <rect x="280" y="210" width="210" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="385" y="236" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-04: View Sales & KPIs Overview</text>
+
+          <!-- UC5 -->
+          <rect x="520" y="210" width="220" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="630" y="236" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-05: Product & Variant Analytics</text>
+
+          <!-- UC6 -->
+          <rect x="280" y="285" width="210" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="385" y="311" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-06: Date Filter (Store Timezone)</text>
+
+          <!-- UC7 -->
+          <rect x="520" y="285" width="220" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="630" y="311" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-07: Asynchronous CSV Export</text>
+
+          <!-- UC8 -->
+          <rect x="390" y="365" width="240" height="42" rx="21" fill="#172238" stroke="#334155" stroke-width="1"/>
+          <text x="510" y="391" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="12" font-weight="500" fill="#e2e8f0">UC-08: App Billing & Plan Subscription</text>
+
+          <!-- Connectors (Merchant -> Use Cases) -->
+          <path d="M 120 220 L 280 96" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 120 230 L 280 231" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 120 240 L 520 231" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 120 250 L 280 306" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 120 260 L 520 306" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 120 270 L 390 386" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+
+          <!-- Connectors (Shopify Platform -> Use Cases) -->
+          <path d="M 860 220 L 490 96" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 860 230 L 490 156" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 860 240 L 740 156" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+          <path d="M 860 260 L 630 386" stroke="#475569" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span>FIGURE 1.1 — SYSTEM ACTORS AND CORE COMMERCE USE CASES</span>
+        <span>SPEC-ID: SPA-UC-01</span>
+      </div>
+    </section>
+
+    <!-- SECTION 2: HIGH LEVEL SYSTEM TOPOLOGY -->
+    <section id="hld">
+      <div class="section-header">
+        <h2 class="section-title">2. High-Level System Design (HLD Topology)</h2>
+        <p class="section-desc">Physical and logical boundaries separating Shopify Admin, React Router Gateway, and the Laravel Data Engine.</p>
+      </div>
+
+      <div class="diagram-frame">
+        <svg viewBox="0 0 1100 560" width="1100" height="560" xmlns="http://www.w3.org/2000/svg">
+          <!-- Colima / Docker Boundary -->
+          <rect x="20" y="20" width="1060" height="520" rx="12" fill="#0b1120" stroke="#1e293b" stroke-width="1.5"/>
+          <text x="45" y="52" font-family="-apple-system, sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="1">DOCKER COMPOSE ISOLATED BRIDGE NETWORK (app-network)</text>
+
+          <!-- Zone 1: Shopify Cloud (External) -->
+          <g transform="translate(50, 80)">
+            <rect x="0" y="0" width="260" height="430" rx="8" fill="#111c2e" stroke="#0284c7" stroke-width="1"/>
+            <text x="20" y="32" font-family="-apple-system, sans-serif" font-size="13" font-weight="700" fill="#38bdf8">1. SHOPIFY CLOUD</text>
+
+            <rect x="18" y="55" width="224" height="60" rx="6" fill="#172740" stroke="#224268"/>
+            <text x="30" y="80" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">Shopify Admin (Browser)</text>
+            <text x="30" y="98" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">App Bridge iframe + Polaris UI</text>
+
+            <rect x="18" y="130" width="224" height="65" rx="6" fill="#172740" stroke="#224268"/>
+            <text x="30" y="155" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">GraphQL Admin API</text>
+            <text x="30" y="173" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">Products, Orders (60D), Refunds</text>
+            <text x="30" y="188" font-family="-apple-system, sans-serif" font-size="10" fill="#38bdf8">Rate-Limit Cost Throttled</text>
+
+            <rect x="18" y="210" width="224" height="60" rx="6" fill="#172740" stroke="#224268"/>
+            <text x="30" y="235" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">Webhook Engine</text>
+            <text x="30" y="253" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">orders/create, refunds/create</text>
+
+            <rect x="18" y="285" width="224" height="60" rx="6" fill="#172740" stroke="#224268"/>
+            <text x="30" y="310" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">Shopify Billing API</text>
+            <text x="30" y="328" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">appSubscriptionCreate</text>
+          </g>
+
+          <!-- Zone 2: React Router Integration Layer -->
+          <g transform="translate(360, 80)">
+            <rect x="0" y="0" width="310" height="430" rx="8" fill="#111c2e" stroke="#8b5cf6" stroke-width="1"/>
+            <text x="20" y="32" font-family="-apple-system, sans-serif" font-size="13" font-weight="700" fill="#c084fc">2. INTEGRATION TIER (React Router)</text>
+
+            <rect x="18" y="55" width="274" height="65" rx="6" fill="#1e1b4b" stroke="#3b0764"/>
+            <text x="30" y="80" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">OAuth & Session Storage</text>
+            <text x="30" y="98" font-family="-apple-system, sans-serif" font-size="11" fill="#cbd5e1">@shopify/shopify-app-react-router</text>
+            <text x="30" y="112" font-family="-apple-system, sans-serif" font-size="10" fill="#c084fc">Tokens NEVER leave this container</text>
+
+            <rect x="18" y="135" width="274" height="65" rx="6" fill="#1e1b4b" stroke="#3b0764"/>
+            <text x="30" y="160" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">GraphQL Harvester & Normalizer</text>
+            <text x="30" y="178" font-family="-apple-system, sans-serif" font-size="11" fill="#cbd5e1">Cursor pagination (first: 50, after: $cursor)</text>
+
+            <rect x="18" y="215" width="274" height="65" rx="6" fill="#1e1b4b" stroke="#3b0764"/>
+            <text x="30" y="240" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">Webhook Receiver (HMAC)</text>
+            <text x="30" y="258" font-family="-apple-system, sans-serif" font-size="11" fill="#cbd5e1">Validates X-Shopify-Hmac-Sha256</text>
+            <text x="30" y="272" font-family="-apple-system, sans-serif" font-size="10" fill="#10b981">Responds 200 OK within 2 seconds</text>
+
+            <!-- S2S Signer Box -->
+            <rect x="18" y="300" width="274" height="95" rx="6" fill="#1f2937" stroke="#475569" stroke-width="1.5"/>
+            <text x="30" y="325" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#38bdf8">S2S Client Signer (backendClient.ts)</text>
+            <text x="30" y="344" font-family="ui-monospace, monospace" font-size="10" fill="#94a3b8">X-App-Shop-Domain: store.myshopify.com</text>
+            <text x="30" y="360" font-family="ui-monospace, monospace" font-size="10" fill="#94a3b8">X-App-Timestamp: 1715400000</text>
+            <text x="30" y="376" font-family="ui-monospace, monospace" font-size="10" fill="#34d399">X-App-Signature: HMAC-SHA256(secret)</text>
+          </g>
+
+          <!-- Zone 3: Laravel Data & Analytics Engine -->
+          <g transform="translate(720, 80)">
+            <rect x="0" y="0" width="330" height="430" rx="8" fill="#111c2e" stroke="#10b981" stroke-width="1"/>
+            <text x="20" y="32" font-family="-apple-system, sans-serif" font-size="13" font-weight="700" fill="#34d399">3. DATA ENGINE (Laravel REST API)</text>
+
+            <rect x="18" y="55" width="294" height="65" rx="6" fill="#064e3b" stroke="#047857"/>
+            <text x="30" y="80" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">VerifyS2SSignature Middleware</text>
+            <text x="30" y="98" font-family="-apple-system, sans-serif" font-size="11" fill="#a7f3d0">Replay Protection: abs(now - ts) &lt; 300s</text>
+            <text x="30" y="112" font-family="-apple-system, sans-serif" font-size="10" fill="#6ee7b7">Binds verified shop_id tenant context</text>
+
+            <rect x="18" y="130" width="294" height="70" rx="6" fill="#0f291e" stroke="#047857"/>
+            <text x="30" y="152" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">Ingestion Pipeline &amp; DB Upserts</text>
+            <text x="30" y="170" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">Illuminate\Pipeline\Pipeline</text>
+            <text x="30" y="185" font-family="-apple-system, sans-serif" font-size="10" fill="#34d399">DB::transaction(fn() =&gt; ..., 5) Deadlock Retry</text>
+
+            <!-- Redis Queue & Atomic Lock -->
+            <rect x="18" y="210" width="294" height="75" rx="6" fill="#0f291e" stroke="#047857"/>
+            <text x="30" y="232" font-family="-apple-system, sans-serif" font-size="12" font-weight="600" fill="#f1f5f9">Redis 7: Queues &amp; Concurrency Locks</text>
+            <text x="30" y="250" font-family="ui-monospace, monospace" font-size="11" fill="#cbd5e1">WithoutOverlapping(shop_id:prod_id:date)</text>
+            <text x="30" y="268" font-family="ui-monospace, monospace" font-size="11" fill="#f59e0b">ShouldBeUnique (Dispatch guard)</text>
+
+            <!-- PostgreSQL Box -->
+            <rect x="18" y="295" width="294" height="105" rx="6" fill="#0b1728" stroke="#1e3a5f" stroke-width="1.5"/>
+            <text x="30" y="320" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#38bdf8">PostgreSQL 16 (Multi-tenant DB)</text>
+            <text x="30" y="338" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">• Normalized: shops, products, orders, lines</text>
+            <text x="30" y="355" font-family="-apple-system, sans-serif" font-size="11" fill="#94a3b8">• Daily Aggregates: product_daily_metrics</text>
+            <text x="30" y="375" font-family="ui-monospace, monospace" font-size="11" fill="#34d399">Index: (shop_id, metric_date) [Sub-50ms reads]</text>
+          </g>
+
+          <!-- Inter-Zone Arrows -->
+          <!-- Shopify to RR -->
+          <line x1="310" y1="165" x2="360" y2="165" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <line x1="310" y1="245" x2="360" y2="245" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- RR to Laravel (S2S boundary) -->
+          <path d="M 670 345 L 720 345" stroke="#34d399" stroke-width="2" marker-end="url(#arrow)"/>
+          <text x="695" y="335" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="#34d399">S2S SIGNED</text>
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span>FIGURE 2.1 — PHYSICAL COMPONENT TOPOLOGY AND SERVICE-TO-SERVICE TRUST BOUNDARY</span>
+        <span>SPEC-ID: SPA-HLD-01</span>
+      </div>
+    </section>
+
+    <!-- SECTION 3: INGESTION PIPELINE LLD -->
+    <section id="pipeline">
+      <div class="section-header">
+        <h2 class="section-title">3. Low-Level Ingestion Pipeline Design (LLD)</h2>
+        <p class="section-desc">Pipeline Pattern (<code style="color:#38bdf8">Illuminate\Pipeline\Pipeline</code>) orchestrating multi-row orders and refunds ingestion.</p>
+      </div>
+
+      <div class="diagram-frame">
+        <svg viewBox="0 0 1000 240" width="1000" height="240" xmlns="http://www.w3.org/2000/svg">
+          <!-- Flow: Inbound Request to Pipeline -->
+          <rect x="20" y="80" width="140" height="60" rx="6" fill="#1e293b" stroke="#64748b"/>
+          <text x="90" y="105" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#f8fafc">POST Ingestion</text>
+          <text x="90" y="123" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#38bdf8">/internal/v1/*</text>
+
+          <line x1="160" y1="110" x2="200" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- Pipe 1: S2S Verify -->
+          <rect x="200" y="70" width="130" height="80" rx="6" fill="#172554" stroke="#2563eb"/>
+          <text x="265" y="98" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#93c5fd">Pipe 1: VerifyS2S</text>
+          <text x="265" y="116" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#bfdbfe">HMAC Signature</text>
+          <text x="265" y="130" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#bfdbfe">±300s Replay Check</text>
+
+          <line x1="330" y1="110" x2="360" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- Pipe 2: Tenant Resolve -->
+          <rect x="360" y="70" width="130" height="80" rx="6" fill="#172554" stroke="#2563eb"/>
+          <text x="425" y="98" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#93c5fd">Pipe 2: ResolveTenant</text>
+          <text x="425" y="116" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#bfdbfe">Map shop_domain</text>
+          <text x="425" y="130" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#bfdbfe">to shop_id UUID</text>
+
+          <line x1="490" y1="110" x2="520" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- Pipe 3: Deduplicate GID -->
+          <rect x="520" y="70" width="130" height="80" rx="6" fill="#172554" stroke="#2563eb"/>
+          <text x="585" y="98" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#93c5fd">Pipe 3: DedupGID</text>
+          <text x="585" y="116" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#bfdbfe">Check webhook_id</text>
+          <text x="585" y="130" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#bfdbfe">&amp; order GID</text>
+
+          <line x1="650" y1="110" x2="680" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- Pipe 4: Idempotent Upsert -->
+          <rect x="680" y="70" width="130" height="80" rx="6" fill="#064e3b" stroke="#059669"/>
+          <text x="745" y="98" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#6ee7b7">Pipe 4: UpsertDB</text>
+          <text x="745" y="116" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#a7f3d0">DB::transaction(5)</text>
+          <text x="745" y="130" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#a7f3d0">ON CONFLICT UPDATE</text>
+
+          <line x1="810" y1="110" x2="840" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+          <!-- Pipe 5: Dispatch Aggregation -->
+          <rect x="840" y="70" width="140" height="80" rx="6" fill="#064e3b" stroke="#059669"/>
+          <text x="910" y="98" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#6ee7b7">Pipe 5: DispatchJob</text>
+          <text x="910" y="116" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#a7f3d0">ShouldBeUnique</text>
+          <text x="910" y="130" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#a7f3d0">WithoutOverlapping</text>
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span>FIGURE 3.1 — INGESTION PIPELINE (PIPELINE PATTERN) EXECUTION CHAIN</span>
+        <span>SPEC-ID: SPA-LLD-PIPE</span>
+      </div>
+    </section>
+
+    <!-- SECTION 4: PLANETSCALE DATABASE SCHEMA & ERD -->
+    <section id="database">
+      <div class="section-header">
+        <h2 class="section-title">4. Database Architecture & ERD (PlanetScale Standards)</h2>
+        <p class="section-desc">Strictly typed PostgreSQL schema designed for multi-tenancy, immutable audit snapshots, and sub-50ms analytics range scans.</p>
+      </div>
+
+      <div class="db-grid">
+
+        <!-- Table 1: shops -->
+        <div class="db-card">
+          <div class="db-card-header">
+            <span class="db-table-name">shops</span>
+            <span class="db-table-badge">TENANT ROOT</span>
+          </div>
+          <div class="db-table-rows">
+            <div class="db-row"><span class="db-col-name">id <span class="db-col-key">PK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shop_domain <span class="db-col-key">UK</span></span><span class="db-col-type">VARCHAR(255)</span></div>
+            <div class="db-row"><span class="db-col-name">shopify_shop_gid</span><span class="db-col-type">VARCHAR(128)</span></div>
+            <div class="db-row"><span class="db-col-name">currency_code</span><span class="db-col-type">CHAR(3)</span></div>
+            <div class="db-row"><span class="db-col-name">timezone</span><span class="db-col-type">VARCHAR(64)</span></div>
+            <div class="db-row"><span class="db-col-name">status</span><span class="db-col-type">VARCHAR(32)</span></div>
+            <div class="db-row"><span class="db-col-name">installed_at</span><span class="db-col-type">TIMESTAMPTZ</span></div>
+            <div class="db-row"><span class="db-col-name">uninstalled_at</span><span class="db-col-type">TIMESTAMPTZ NULL</span></div>
+          </div>
+          <div class="db-index-box">
+            INDEX idx_shops_domain (shop_domain)
+          </div>
+        </div>
+
+        <!-- Table 2: products -->
+        <div class="db-card">
+          <div class="db-card-header">
+            <span class="db-table-name">products</span>
+            <span class="db-table-badge">CATALOGUE</span>
+          </div>
+          <div class="db-table-rows">
+            <div class="db-row"><span class="db-col-name">id <span class="db-col-key">PK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shop_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shopify_product_gid</span><span class="db-col-type">VARCHAR(128)</span></div>
+            <div class="db-row"><span class="db-col-name">title</span><span class="db-col-type">VARCHAR(255)</span></div>
+            <div class="db-row"><span class="db-col-name">vendor</span><span class="db-col-type">VARCHAR(128) NULL</span></div>
+            <div class="db-row"><span class="db-col-name">product_type</span><span class="db-col-type">VARCHAR(128) NULL</span></div>
+            <div class="db-row"><span class="db-col-name">status</span><span class="db-col-type">VARCHAR(32)</span></div>
+          </div>
+          <div class="db-index-box">
+            UNIQUE (shop_id, shopify_product_gid)
+          </div>
+        </div>
+
+        <!-- Table 3: orders -->
+        <div class="db-card">
+          <div class="db-card-header">
+            <span class="db-table-name">orders</span>
+            <span class="db-table-badge">COMMERCE</span>
+          </div>
+          <div class="db-table-rows">
+            <div class="db-row"><span class="db-col-name">id <span class="db-col-key">PK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shop_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shopify_order_gid</span><span class="db-col-type">VARCHAR(128)</span></div>
+            <div class="db-row"><span class="db-col-name">order_name</span><span class="db-col-type">VARCHAR(64)</span></div>
+            <div class="db-row"><span class="db-col-name">financial_status</span><span class="db-col-type">VARCHAR(32)</span></div>
+            <div class="db-row"><span class="db-col-name">processed_at</span><span class="db-col-type">TIMESTAMPTZ</span></div>
+          </div>
+          <div class="db-index-box">
+            UNIQUE (shop_id, shopify_order_gid)<br>
+            INDEX idx_orders_shop_processed (shop_id, processed_at)
+          </div>
+        </div>
+
+        <!-- Table 4: order_line_items -->
+        <div class="db-card">
+          <div class="db-card-header">
+            <span class="db-table-name">order_line_items</span>
+            <span class="db-table-badge">SNAPSHOT</span>
+          </div>
+          <div class="db-table-rows">
+            <div class="db-row"><span class="db-col-name">id <span class="db-col-key">PK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shop_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">order_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">product_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID NULL</span></div>
+            <div class="db-row"><span class="db-col-name">quantity</span><span class="db-col-type">INTEGER</span></div>
+            <div class="db-row"><span class="db-col-name">original_unit_price</span><span class="db-col-type">DECIMAL(20,6)</span></div>
+            <div class="db-row"><span class="db-col-name">discount_amount</span><span class="db-col-type">DECIMAL(20,6)</span></div>
+          </div>
+          <div class="db-index-box">
+            INDEX idx_lines_shop_product (shop_id, product_id)
+          </div>
+        </div>
+
+        <!-- Table 5: product_daily_metrics (THE CORE ANALYTICS TABLE) -->
+        <div class="db-card" style="border-color: #38bdf8;">
+          <div class="db-card-header" style="background: rgba(56, 189, 248, 0.1);">
+            <span class="db-table-name" style="color: #38bdf8;">product_daily_metrics</span>
+            <span class="db-table-badge" style="background: #0369a1; color: #fff;">PRECOMPUTED AGGREGATE</span>
+          </div>
+          <div class="db-table-rows">
+            <div class="db-row"><span class="db-col-name">id <span class="db-col-key">PK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shop_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">product_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">metric_date</span><span class="db-col-type">DATE (Store-Local)</span></div>
+            <div class="db-row"><span class="db-col-name">currency_code</span><span class="db-col-type">CHAR(3)</span></div>
+            <div class="db-row"><span class="db-col-name">gross_sales</span><span class="db-col-type">DECIMAL(20,6)</span></div>
+            <div class="db-row"><span class="db-col-name">discounts</span><span class="db-col-type">DECIMAL(20,6)</span></div>
+            <div class="db-row"><span class="db-col-name">refunds</span><span class="db-col-type">DECIMAL(20,6)</span></div>
+            <div class="db-row"><span class="db-col-name">net_sales</span><span class="db-col-type">DECIMAL(20,6)</span></div>
+            <div class="db-row"><span class="db-col-name">units_sold</span><span class="db-col-type">INTEGER</span></div>
+            <div class="db-row"><span class="db-col-name">order_count</span><span class="db-col-type">INTEGER</span></div>
+          </div>
+          <div class="db-index-box">
+            UNIQUE (shop_id, product_id, metric_date, currency_code)<br>
+            INDEX idx_metrics_range (shop_id, metric_date)
+          </div>
+        </div>
+
+        <!-- Table 6: webhook_events -->
+        <div class="db-card">
+          <div class="db-card-header">
+            <span class="db-table-name">webhook_events</span>
+            <span class="db-table-badge">IDEMPOTENCY</span>
+          </div>
+          <div class="db-table-rows">
+            <div class="db-row"><span class="db-col-name">id <span class="db-col-key">PK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">shop_id <span class="db-col-key">FK</span></span><span class="db-col-type">UUID</span></div>
+            <div class="db-row"><span class="db-col-name">webhook_id <span class="db-col-key">UK</span></span><span class="db-col-type">VARCHAR(128)</span></div>
+            <div class="db-row"><span class="db-col-name">topic</span><span class="db-col-type">VARCHAR(128)</span></div>
+            <div class="db-row"><span class="db-col-name">status</span><span class="db-col-type">VARCHAR(32)</span></div>
+            <div class="db-row"><span class="db-col-name">received_at</span><span class="db-col-type">TIMESTAMPTZ</span></div>
+          </div>
+          <div class="db-index-box">
+            UNIQUE (shop_id, webhook_id)
+          </div>
+        </div>
+
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">PlanetScale Access Path Design Insight</div>
+        <p>
+          Live merchant dashboards query exclusively from <code>product_daily_metrics</code> using the composite B-Tree index <code>(shop_id, metric_date)</code>. Because metrics are precomputed during ingestion, range queries execute in <strong>&lt;10ms</strong> and never perform full table scans over millions of historical <code>order_line_items</code>.
+        </p>
+      </div>
+    </section>
+
+    <!-- SECTION 5: SEQUENCE FLOWS -->
+    <section id="sequence">
+      <div class="section-header">
+        <h2 class="section-title">5. Critical Sequence Flows</h2>
+        <p class="section-desc">Visual execution flows for asynchronous webhook metric calculation and low-latency dashboard reads.</p>
+      </div>
+
+      <div class="diagram-frame">
+        <svg viewBox="0 0 1000 380" width="1000" height="380" xmlns="http://www.w3.org/2000/svg">
+          <!-- Participants -->
+          <rect x="50" y="20" width="130" height="35" rx="5" fill="#1e293b" stroke="#64748b"/>
+          <text x="115" y="42" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#f8fafc">Shopify Webhooks</text>
+
+          <rect x="250" y="20" width="130" height="35" rx="5" fill="#1e293b" stroke="#8b5cf6"/>
+          <text x="315" y="42" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#c084fc">React Router</text>
+
+          <rect x="450" y="20" width="130" height="35" rx="5" fill="#1e293b" stroke="#10b981"/>
+          <text x="515" y="42" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#34d399">Laravel Ingestion</text>
+
+          <rect x="650" y="20" width="130" height="35" rx="5" fill="#1e293b" stroke="#f59e0b"/>
+          <text x="715" y="42" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#fbbf24">Redis Queue &amp; Lock</text>
+
+          <rect x="850" y="20" width="120" height="35" rx="5" fill="#1e293b" stroke="#0284c7"/>
+          <text x="910" y="42" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" fill="#38bdf8">PostgreSQL 16</text>
+
+          <!-- Lifelines -->
+          <line x1="115" y1="55" x2="115" y2="350" stroke="#334155" stroke-width="1" stroke-dasharray="4 4"/>
+          <line x1="315" y1="55" x2="315" y2="350" stroke="#334155" stroke-width="1" stroke-dasharray="4 4"/>
+          <line x1="515" y1="55" x2="515" y2="350" stroke="#334155" stroke-width="1" stroke-dasharray="4 4"/>
+          <line x1="715" y1="55" x2="715" y2="350" stroke="#334155" stroke-width="1" stroke-dasharray="4 4"/>
+          <line x1="910" y1="55" x2="910" y2="350" stroke="#334155" stroke-width="1" stroke-dasharray="4 4"/>
+
+          <!-- Message 1: Shopify to RR -->
+          <line x1="115" y1="85" x2="315" y2="85" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <text x="215" y="78" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10" fill="#e2e8f0">1. POST /webhooks/orders/create</text>
+
+          <!-- Response: 200 OK -->
+          <line x1="315" y1="115" x2="115" y2="115" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+          <text x="215" y="108" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10" fill="#94a3b8">2. 200 OK (&lt; 2000ms ACK)</text>
+
+          <!-- Message 2: RR to Laravel -->
+          <line x1="315" y1="150" x2="515" y2="150" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <text x="415" y="142" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="#34d399">3. S2S Signed Ingest POST</text>
+
+          <!-- DB Upsert -->
+          <line x1="515" y1="180" x2="910" y2="180" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <text x="712" y="172" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10" fill="#e2e8f0">4. DB::transaction(upsert orders/lines, 5)</text>
+
+          <!-- Dispatch Job -->
+          <line x1="515" y1="215" x2="715" y2="215" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrow)"/>
+          <text x="615" y="208" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10" fill="#fbbf24">5. Dispatch AggregateMetricsJob</text>
+
+          <!-- Async Worker Execution -->
+          <rect x="680" y="245" width="260" height="85" rx="6" fill="#1e182e" stroke="#a855f7" stroke-dasharray="3 3"/>
+          <text x="810" y="265" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="10" font-weight="700" fill="#c084fc">ASYNC QUEUE WORKER</text>
+          <text x="810" y="282" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="#e2e8f0">6. Lock: WithoutOverlapping(shop:prod:date)</text>
+          <text x="810" y="298" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="9" fill="#94a3b8">7. Recalculate Gross/Net/Refunds</text>
+          <text x="810" y="315" text-anchor="middle" font-family="ui-monospace, monospace" font-size="9" fill="#34d399">8. Upsert product_daily_metrics</text>
+        </svg>
+      </div>
+      <div class="diagram-caption">
+        <span>FIGURE 5.1 — ASYNCHRONOUS INGESTION AND ATOMIC METRICS AGGREGATION SEQUENCE</span>
+        <span>SPEC-ID: SPA-SEQ-01</span>
+      </div>
+    </section>
+
+    <!-- SECTION 6: PERFORMANCE SAFEGUARDS -->
+    <section id="safeguards">
+      <div class="section-header">
+        <h2 class="section-title">6. Performance & Scalability Safeguards</h2>
+        <p class="section-desc">Key engineering patterns and architectural boundaries implemented to guarantee production reliability.</p>
+      </div>
+
+      <div class="db-grid">
+        <div class="db-card" style="padding: 20px;">
+          <h3 style="color: #38bdf8; font-size: 15px; margin-bottom: 8px;">1. Sub-50ms Dashboard Read SLA</h3>
+          <p style="color: var(--text-muted); font-size: 13px;">
+            Live dashboard requests never touch raw order line items. Precomputed aggregates stored in <code>product_daily_metrics</code> are queried directly via composite indexes, guaranteeing sub-50ms responses regardless of total catalogue size.
+          </p>
+        </div>
+
+        <div class="db-card" style="padding: 20px;">
+          <h3 style="color: #34d399; font-size: 15px; margin-bottom: 8px;">2. Zero Access Token Leakage</h3>
+          <p style="color: var(--text-muted); font-size: 13px;">
+            Shopify OAuth credentials reside strictly in React Router server session storage. Browser frontend and the Laravel backend never receive or store raw Shopify access tokens.
+          </p>
+        </div>
+
+        <div class="db-card" style="padding: 20px;">
+          <h3 style="color: #fbbf24; font-size: 15px; margin-bottom: 8px;">3. Concurrency &amp; Deadlock Guard</h3>
+          <p style="color: var(--text-muted); font-size: 13px;">
+            All multi-row upserts use <code>DB::transaction(fn() =&gt; ..., 5)</code> for automatic PostgreSQL deadlock recovery. Worker execution is bounded by Redis atomic locks using <code>WithoutOverlapping</code>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</body>
+</html>
