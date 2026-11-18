@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${DB_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
@@ -75,18 +75,15 @@ services:
 
   shopify-app:
     build:
-      context: .
-      dockerfile: infrastructure/docker/node/Dockerfile
+      context: ./shopify-app
+    profiles: ["app"]
     container_name: spa_shopify_app
     restart: unless-stopped
-    working_dir: /app
-    volumes:
-      - ./shopify-app:/app
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: development
       PORT: 3000
+      DATABASE_URL: postgresql://${DB_USERNAME:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/shopify_sessions
       BACKEND_API_URL: http://backend:8000
       S2S_SHARED_SECRET: ${S2S_SHARED_SECRET:?Set S2S_SHARED_SECRET in .env}
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:?Set SHOPIFY_API_KEY in .env}
@@ -94,7 +91,10 @@ services:
       SCOPES: ${SCOPES:?Set SCOPES in .env}
       SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:?Set SHOPIFY_APP_URL in .env}
     depends_on:
-      - backend
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
     networks:
       - app-network
 

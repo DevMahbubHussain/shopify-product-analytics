@@ -46,8 +46,8 @@ Embedded Shopify public app (lives inside Shopify Admin, installed and billed vi
 Shopify Admin (App Bridge iframe + Polaris)
         │
         ▼
-React Router app  (shopify-app/, Node 20, port 3000)
-  - OAuth + session storage (tokens NEVER leave this container)
+React Router app  (shopify-app/, Node 22, port 3000)
+  - OAuth + Prisma session storage in Postgres `shopify_sessions` (tokens NEVER leave this app)
   - GraphQL Admin API harvester (cursor pagination first: 50, cost-throttled)
   - Webhook receiver (verify X-Shopify-Hmac-Sha256, 200 OK < 2s)
   - Billing mutations (appSubscriptionCreate)
@@ -157,17 +157,18 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ## 7. Current Repository State (verified 2026-11-18)
 
-Step 1 (Foundation & S2S) complete except the React Router app skeleton (`shopify-app` is a minimal tsx server). Step 2 (schema + ingestion endpoints) complete on `ingestion-pipeline`; aggregation listeners for `OrdersIngested` / `RefundsIngested` arrive in Step 4.
+Steps 1–2 complete and merged to `main`. Step 3 (Shopify integration) in progress on `shopify-integration`: group B (template baseline) done through install → Laravel shop registration. Aggregation listeners for `OrdersIngested` / `RefundsIngested` arrive in Step 4.
 
 | Area | Actual state |
 |---|---|
 | Laravel | `laravel/framework ^13.17`, PHP 8.3 CLI image running `php artisan serve`, Pest ^4.7 |
-| Routes | `routes/api.php`: `GET /api/v1/health`, `POST /internal/v1/ping` (`s2s` middleware). `apiPrefix: ''` in `bootstrap/app.php` |
+| Routes | `routes/api.php`: `GET /api/v1/health`, `POST /internal/v1/ping`, `POST /internal/v1/ingestion/*` (all `/internal` routes use `s2s` middleware). `apiPrefix: ''` in `bootstrap/app.php` |
 | S2S middleware | `backend/app/Http/Middleware/VerifyS2SSignature.php`, aliased `s2s`, sets `shop_domain` request attribute |
 | Correlation | `backend/app/Http/Middleware/AssignCorrelationId.php`, prepended globally; `Context::add('correlation_id')` flows into logs and queued jobs |
-| S2S client | `shopify-app/app/services/backendClient.ts` (`backendClient().postInternal`), lazy singleton, throws without env |
-| Tests | `backend/tests/Feature/Security/{VerifyS2SSignatureTest,CorrelationIdTest}.php`, `backend/tests/Feature/Infrastructure/TestEnvironmentIsolationTest.php`, `shopify-app/tests/s2sHandshake.test.ts` |
-| shopify-app | Plain `tsx` server (`app/index.ts`); no React Router routes, `shopify.server.ts`, or Polaris UI yet |
+| S2S client | `shopify-app/app/services/backendClient.server.ts` (`backendClient().postInternal`), lazy singleton, throws without env |
+| Shop registration | `shopify-app/app/services/registerShop.server.ts`, called from `hooks.afterAuth` in `app/shopify.server.ts`: Shopify `shop { id currencyCode ianaTimezone }` → `POST /internal/v1/ingestion/shop`; failures propagate (install retried) |
+| Tests | Backend: Pest suites under `backend/tests/Feature/{Security,Database,Ingestion,Infrastructure}`. Gateway: `shopify-app/tests/{backendClient,registerShop}.server.test.ts` via `npm test` (`node --test`) |
+| shopify-app | Official React Router template (`@shopify/shopify-app-react-router` 4.x), Admin API `2026-10`, Polaris web components, Prisma sessions in Postgres `shopify_sessions`. Runs on host via `shopify app dev --config local`; optional container under compose profile `app`. Demo code removed; placeholder home page only |
 | Migrations | 10 domain tables; spec in `docs/migrations.md` |
 | Ingestion | `POST /internal/v1/ingestion/{shop,products,orders,refunds,webhook-events,sync-status}` via `IngestionController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
 | Ingestion internals | FormRequest → readonly DTO (`app/Data/Ingestion`) → pipes; `GuardedUpsert` (ON CONFLICT with `shopify_updated_at` freshness guard), `TenantIdLookup`; VOs `ShopifyGid`, `DecimalAmount`; enums in `app/Enums` |

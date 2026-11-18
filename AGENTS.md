@@ -157,13 +157,14 @@ This rule overrides any instruction to "go", "continue", or "implement the featu
 The project runs in a containerized Docker environment (Colima on macOS). If `docker` cannot reach the daemon: `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`.
 
 ```bash
-# First run: images do not bundle dependencies (source is bind-mounted)
+# First run: backend image does not bundle dependencies (source is bind-mounted)
 docker compose build
 docker compose run --rm --no-deps backend composer install
-docker compose run --rm --no-deps shopify-app npm install
+cd shopify-app && npm install && cd ..   # Shopify app dependencies install on the host
 
 # Docker Environment
-docker compose up -d                  # Start all services (shopify-app, backend, postgres, redis, laravel-worker)
+docker compose up -d                  # Start backend, laravel-worker, postgres (host port 5433), redis
+docker compose --profile app up -d --build shopify-app   # Optional: production-style gateway container on :3000
 docker compose down                  # Stop all services
 docker compose logs -f [service]     # Tail logs for a specific service
 
@@ -173,18 +174,22 @@ docker compose exec backend ./vendor/bin/pest                # Run Pest test sui
 docker compose exec backend ./vendor/bin/pest --filter=Name  # Run targeted test
 docker compose exec backend php artisan queue:work redis     # Run queue worker manually
 
-# Shopify App
-docker compose exec shopify-app npm run dev                 # Start gateway dev server (tsx watch)
-docker compose exec shopify-app npm run build               # Compile TypeScript
-docker compose exec shopify-app npm run lint                # TypeScript strict type check
-docker compose exec shopify-app npm test                    # Node test runner
+# Shopify App (runs on the host; Node >= 22.12)
+cd shopify-app
+shopify app dev --config local   # Dev server + tunnel; loads shopify-app/.env via --env-file-if-exists
+npm run build                    # Production build (react-router build)
+npm run typecheck                # react-router typegen + tsc strict
+npm run lint                     # ESLint
+npm test                         # node --test "tests/**/*.test.ts" (built-in runner, no extra deps)
+npm run setup                    # prisma generate + migrate deploy (shopify_sessions)
 # Playwright E2E (npx playwright test) is added with the Step 6 UI; not installed yet.
 
-# S2S live probe
-curl -s "http://localhost:3000/s2s-handshake?shop=demo.myshopify.com"   # expects "s2s":"verified"
+# Live install check: open the app in the dev store, then confirm the shop reached Laravel
+docker compose exec postgres psql -U postgres -d shopify_analytics -c "select shop_domain, status from shops"
 
 # Database & Cache Inspection
-docker compose exec postgres psql -U postgres -d shopify_analytics  # PostgreSQL CLI
+docker compose exec postgres psql -U postgres -d shopify_analytics  # Laravel data
+docker compose exec postgres psql -U postgres -d shopify_sessions   # Gateway sessions (Prisma)
 docker compose exec redis redis-cli                                  # Redis CLI
 ```
 
@@ -194,11 +199,13 @@ docker compose exec redis redis-cli                                  # Redis CLI
 |---|---|---|---|
 | `backend/.env` | No | Every Laravel process (HTTP, worker, CLI, tests) | `APP_KEY`, DB, Redis, `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`, `S2S_SHARED_SECRET` |
 | `.env` (root) | No | `docker compose` interpolation | `DB_*` for `postgres`; `S2S_SHARED_SECRET`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`, `SHOPIFY_APP_URL` for `shopify-app` |
-| `.env.example`, `backend/.env.example` | Yes | Humans | Key names only, never secret values |
+| `shopify-app/.env` | No | Host dev only: Prisma CLI and `shopify app dev` (`node --env-file-if-exists=.env`) | `DATABASE_URL` (`localhost:5433/shopify_sessions`), `BACKEND_API_URL`, `S2S_SHARED_SECRET` |
+| `.env.example`, `backend/.env.example`, `shopify-app/.env.example` | Yes | Humans | Key names only, never secret values |
 
 - Compose MUST NOT inject Laravel env vars into `backend` or `laravel-worker`. `php artisan serve` strips container env from its HTTP workers (`ServeCommand::$passthroughVariables`), so compose env would reach only the worker and split config (different cache prefixes, unshared Redis locks). `backend/.env` is the single Laravel source of truth.
-- `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` must be identical in both files.
-- Shopify credentials go only to the `shopify-app` container. Never place them in `backend/.env` or any Laravel config.
+- `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` must be identical in both files. `S2S_SHARED_SECRET` and the DB password in `shopify-app/.env` must match them too.
+- Shopify credentials go only to the Shopify app (Shopify CLI on the host, compose env for the `app` profile container). Never place them in `backend/.env` or any Laravel config.
+- `shopify-app/.dockerignore` excludes `.env*` (except `.env.example`), `shopify.app.*.toml`, `.shopify`, and `tests`; images never contain secrets.
 - Required compose values use `${VAR:?message}` so a missing secret fails fast. No hard-coded fallback secrets in code or compose.
 - Never print secret values in terminal output; inspect lengths, prefixes, or hashes instead.
 
@@ -227,7 +234,7 @@ Nonce:     Cache::store('redis')->add('s2s:nonce:{uuid}', 1, tolerance * 2), cla
 Errors:    401 {"error": "..."}
 ```
 
-Any change to this contract updates `VerifyS2SSignature.php`, `backendClient.ts`, and both test suites together.
+Any change to this contract updates `VerifyS2SSignature.php`, `shopify-app/app/services/backendClient.server.ts`, and both test suites together.
 
 ---
 
@@ -251,7 +258,7 @@ flowchart TD
 ### Step 1: Foundation & S2S Trust Boundary
 - Scaffold Docker Compose configuration (`shopify-app`, `backend`, `postgres`, `redis`, `laravel-worker`).
 - Scaffold Laravel 13 backend skeleton with PostgreSQL and Redis connections.
-- Scaffold React Router Shopify embedded app skeleton using `@shopify/shopify-app-react-router` and `@shopify/polaris`. *(Pending: `shopify-app` is currently a minimal Node/tsx server; complete before Step 3.)*
+- Scaffold React Router Shopify embedded app skeleton using `@shopify/shopify-app-react-router` and `@shopify/polaris`. *(Done: scaffolded from the official React Router app template; UI uses Polaris web components.)*
 - Build and test the Service-to-Service (S2S) HMAC-SHA256 authentication middleware in Laravel and client signer in React Router.
 - Verify request replay protection (timestamp tolerance ±300 seconds, inclusive) and single-use nonce verification (`X-App-Nonce`, Redis-claimed).
 
