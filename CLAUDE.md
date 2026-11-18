@@ -6,6 +6,16 @@ Binding engineering rules live in `AGENTS.md` and are imported verbatim below. T
 
 ---
 
+## 0. Working Protocol (Strict — see AGENTS.md C15)
+
+- Never write a whole feature at once. Present the plan (what it provides + ordered file list), then stop for approval.
+- One file per step: explain before writing, explain after writing (what, why, how verified), then **stop and wait for explicit permission**.
+- "Go" / "continue" approves the next single step only.
+- No extra files or side edits outside the approved step; report them and ask instead.
+- Finish every feature with a `docs/<feature>.md` explainer in the style of `docs/migrations.md`.
+
+---
+
 ## 1. Source Documents
 
 | File | Role | Read when |
@@ -147,7 +157,7 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ## 7. Current Repository State (verified 2026-11-18)
 
-Step 1 (Foundation & S2S) complete except the React Router app skeleton (`shopify-app` is a minimal tsx server). Nothing from Step 2+ exists yet.
+Step 1 (Foundation & S2S) complete except the React Router app skeleton (`shopify-app` is a minimal tsx server). Step 2 (schema + ingestion endpoints) complete on `ingestion-pipeline`; aggregation listeners for `OrdersIngested` / `RefundsIngested` arrive in Step 4.
 
 | Area | Actual state |
 |---|---|
@@ -158,7 +168,9 @@ Step 1 (Foundation & S2S) complete except the React Router app skeleton (`shopif
 | S2S client | `shopify-app/app/services/backendClient.ts` (`backendClient().postInternal`), lazy singleton, throws without env |
 | Tests | `backend/tests/Feature/Security/{VerifyS2SSignatureTest,CorrelationIdTest}.php`, `backend/tests/Feature/Infrastructure/TestEnvironmentIsolationTest.php`, `shopify-app/tests/s2sHandshake.test.ts` |
 | shopify-app | Plain `tsx` server (`app/index.ts`); no React Router routes, `shopify.server.ts`, or Polaris UI yet |
-| Migrations | Only Laravel defaults (users, cache, jobs) |
+| Migrations | 10 domain tables; spec in `docs/migrations.md` |
+| Ingestion | `POST /internal/v1/ingestion/{shop,products,orders,refunds,webhook-events,sync-status}` via `IngestionController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
+| Ingestion internals | FormRequest → readonly DTO (`app/Data/Ingestion`) → pipes; `GuardedUpsert` (ON CONFLICT with `shopify_updated_at` freshness guard), `TenantIdLookup`; VOs `ShopifyGid`, `DecimalAmount`; enums in `app/Enums` |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
 
 ### Environment, config, tests, S2S

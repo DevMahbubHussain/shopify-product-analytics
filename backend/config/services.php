@@ -40,6 +40,7 @@ return [
     's2s' => [
         'secret' => env('S2S_SHARED_SECRET'),
         'tolerance' => (int) env('S2S_TOLERANCE_SECONDS', 300),
+        'ingestion_per_minute' => (int) env('S2S_INGESTION_PER_MINUTE', 600),
     ],
 
 ];

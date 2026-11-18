@@ -8,6 +8,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Middleware\ThrottleRequests;
+use Illuminate\Routing\Middleware\ThrottleRequestsWithRedis;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -19,6 +21,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(AssignCorrelationId::class);
+        $middleware->throttleWithRedis();
+        $middleware->prependToPriorityList(
+            before: [ThrottleRequests::class, ThrottleRequestsWithRedis::class],
+            prepend: VerifyS2SSignature::class,
+        );
 
         $middleware->alias([
             's2s' => VerifyS2SSignature::class,

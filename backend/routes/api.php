@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Internal\IngestionController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -55,4 +56,16 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(function () {
             'timestamp' => time(),
         ]);
     });
+
+    Route::prefix('ingestion')
+        ->middleware('throttle:s2s-ingestion')
+        ->controller(IngestionController::class)
+        ->group(function (): void {
+            Route::post('shop', 'shop');
+            Route::post('products', 'products');
+            Route::post('orders', 'orders');
+            Route::post('refunds', 'refunds');
+            Route::post('webhook-events', 'webhookEvents');
+            Route::post('sync-status', 'syncStatus');
+        });
 });

@@ -136,6 +136,20 @@ When authoring or consuming any REST API endpoint in Laravel (both private S2S i
 - **Predictable Factory Methods:** DTOs must provide strict, static factory methods (e.g. `fromRequest(FormRequest $request): self`, `fromArray(array $data): self`).
 - **Consistent Response Contracts:** All outbound API responses must pass through typed Laravel API Resource classes or Response DTOs to ensure frontend contracts are guaranteed and internal database attributes are never leaked.
 
+### C15. Incremental Delivery — One File per Step, Explicit Approval (Strict)
+The project owner must understand and control every line that enters the codebase. Writing a whole feature in one pass is prohibited.
+
+1. **Plan first, then stop.** Before writing any code for a feature, present the plan: what the feature provides, and the ordered list of files to create or change, each with a one-line purpose. Wait for approval of the plan.
+2. **One file per step.** Each step creates or changes exactly one file. A test file is its own step (TDD: the test step comes before the implementation step it drives).
+3. **Before writing the file, explain:** the file path, its role in the feature, what it provides, and how it connects to the files already approved.
+4. **After writing the file, explain in plain language:** what each part does and why, any decision made, and how it was verified (test run, lint, probe output). Show the important parts of the file.
+5. **Stop and ask permission** before the next step. Do not continue until the owner explicitly approves. Silence, or an unrelated reply, is not approval.
+6. **Changes to approved files** follow the same rule: one file, explained, then wait.
+7. **No hidden work.** No extra files, refactors, renames, or "while I'm here" edits outside the approved step. If something else needs fixing, report it and ask.
+8. **Feature documentation.** When a feature is finished, produce a `docs/<feature>.md` explainer in the style of `docs/migrations.md`: what the feature provides, the request/data flow, a file-by-file breakdown, edge cases handled, and verification evidence.
+
+This rule overrides any instruction to "go", "continue", or "implement the feature": those approve the next single step only.
+
 ---
 
 ## 2. Environment & Commands Reference
