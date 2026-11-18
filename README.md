@@ -13,10 +13,119 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 |---|---|
 | Docker stack, env/secrets handling, S2S boundary, test harness | Done |
 | Shopify app config (`shopify.app.toml` template + gitignored `shopify.app.local.toml`, API `2026-10`, managed install) | Done |
+| Multi-tenant domain schema (10 tables) | Done |
+| Ingestion API (6 signed endpoints) | Done |
 | React Router OAuth, session storage, Polaris UI, webhooks | Planned (gateway is currently a minimal Node server) |
-| Domain schema, ingestion pipeline, aggregation, analytics API | Planned |
+| Metric aggregation, analytics REST API, billing, exports | Planned |
 
 Boxes in the topology below marked *(planned)* describe the target architecture.
+
+---
+
+## Features
+
+Each feature lists what it provides, where it lives, and how it talks to the rest of the system. Full explainers are linked.
+
+### 1. Service-to-Service (S2S) Trust Boundary
+
+**Provides:** proof that every request reaching Laravel's private API came from our own Shopify gateway, was not tampered with, and is not a replay, plus the verified store (tenant) it belongs to.
+
+| Part | Location |
+|---|---|
+| Request signer | `shopify-app/app/services/backendClient.ts` |
+| Signature, timestamp, and nonce check | `backend/app/Http/Middleware/VerifyS2SSignature.php` |
+| Correlation IDs for tracing | `backend/app/Http/Middleware/AssignCorrelationId.php` |
+
+**How it communicates:** the gateway signs `METHOD, PATH, TIMESTAMP, NONCE, SHOP_DOMAIN, sha256(body)` with the shared secret and sends `X-App-*` headers. Laravel recomputes the HMAC, rejects clock drift beyond ±300 s, claims the nonce once in Redis, then exposes the verified `shop_domain` to the rest of the request. Contract: [§3](#3-cryptographic-s2s-trust-boundary) and `AGENTS.md` §2.4.
+
+### 2. Multi-Tenant Domain Schema
+
+**Provides:** PostgreSQL storage for shops, products, variants, orders, line items, refunds, daily metrics, sync runs, webhook deliveries, and subscriptions, where the database itself guarantees correctness:
+- every row belongs to one shop, and cross-shop references are impossible (composite foreign keys)
+- re-imports cannot duplicate rows (unique Shopify GID keys)
+- sales history survives product deletion (soft deletes plus guarded foreign keys)
+- money is exact `DECIMAL(20,6)` with a validated currency code
+
+| Part | Location |
+|---|---|
+| Migrations | `backend/database/migrations/2026_11_18_0000*` |
+| Schema tests | `backend/tests/Feature/Database/` |
+| Explainer | [docs/migrations.md](docs/migrations.md) |
+
+**How it communicates:** only Laravel reads or writes it. Dashboards will read only the precomputed `product_daily_metrics` table (2 ms for a 30-day overview at 109,000 rows).
+
+### 3. Ingestion API
+
+**Provides:** six private endpoints through which the gateway pushes Shopify data into Laravel:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /internal/v1/ingestion/shop` | Install, refresh, or reactivate a store |
+| `POST /internal/v1/ingestion/products` | Upsert products with variants |
+| `POST /internal/v1/ingestion/orders` | Upsert orders with line items |
+| `POST /internal/v1/ingestion/refunds` | Upsert refund lines |
+| `POST /internal/v1/ingestion/webhook-events` | Record a webhook delivery and detect repeats |
+| `POST /internal/v1/ingestion/sync-status` | Track a sync run from start to finish |
+
+Guarantees: safe retries (no duplicates), stale out-of-order updates ignored, tenant taken only from the signed header, strict validation (string money, timezone-aware timestamps, typed GIDs), and under 200 ms per request (250 line items in about 125 ms).
+
+| Part | Location |
+|---|---|
+| Endpoint → pipeline mapping | `backend/app/Http/Controllers/Internal/IngestionController.php` |
+| Validation and typed input | `backend/app/Http/Requests/Internal/`, `backend/app/Data/Ingestion/` |
+| Pipeline steps and safe upserts | `backend/app/Ingestion/` |
+| Payload contract | [docs/ingestion-api.md](docs/ingestion-api.md) |
+| File-by-file explainer | [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) |
+
+**How it communicates:** the gateway calls it with signed JSON (Feature 1). Each request passes through `FormRequest → readonly DTO → Pipeline (ResolveShopTenant → Upsert… → DispatchIngestedEvents)`. After the write commits, Laravel fires `OrdersIngested` / `RefundsIngested`, which the Step 4 aggregation jobs will consume through Redis queues.
+
+### 4. Platform Foundations
+
+**Provides:** a reproducible local stack, with no secrets in git and tests that never touch development data.
+- Secrets live only in gitignored `.env` files; compose refuses to start when a value is missing.
+- `backend/.env` is the single Laravel config source, so the HTTP server and the queue worker share cache prefixes and Redis locks.
+- Tests run on their own PostgreSQL database and Redis databases, guarded by `TestEnvironmentIsolationTest`.
+
+Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.md](STARTER.md).
+
+---
+
+## How the Parts Communicate
+
+```
+ Merchant browser (Shopify Admin)
+        │  App Bridge iframe                                    (planned: Step 3/6)
+        ▼
+ ┌──────────────────────────┐   GraphQL Admin API (OAuth token)   ┌─────────────────┐
+ │ shopify-app (Node 20)    │ ──────────────────────────────────► │ Shopify         │
+ │ gateway / integration    │ ◄────────────────────────────────── │ platform        │
+ │                          │   Webhooks (X-Shopify-Hmac-Sha256)  └─────────────────┘
+ └────────────┬─────────────┘
+              │  Signed JSON over the internal Docker network
+              │  X-App-Shop-Domain · X-App-Timestamp · X-App-Nonce · X-App-Signature
+              ▼
+ ┌──────────────────────────┐  writes / reads   ┌──────────────────┐
+ │ backend (Laravel 13)     │ ────────────────► │ PostgreSQL 16    │
+ │ /internal/v1/ingestion/* │                   └──────────────────┘
+ │ /api/v1/*  (planned)     │  nonces, rate     ┌──────────────────┐
+ │                          │  limits, queue ─► │ Redis 7          │
+ └──────────────────────────┘                   └────────┬─────────┘
+                                                         │ OrdersIngested / RefundsIngested
+                                                         ▼
+                                                ┌──────────────────┐
+                                                │ laravel-worker   │  aggregation (planned: Step 4)
+                                                └──────────────────┘
+```
+
+| From → To | Channel | Security | Status |
+|---|---|---|---|
+| Shopify → shopify-app | HTTPS webhooks | `X-Shopify-Hmac-Sha256` | Planned (Step 3) |
+| shopify-app → Shopify | GraphQL Admin API `2026-10` | OAuth access token (never leaves shopify-app) | Planned (Step 3) |
+| shopify-app → backend | JSON over internal network | HMAC-SHA256 + ±300 s timestamp + single-use nonce + per-shop rate limit | Done |
+| backend → PostgreSQL | SQL | Tenant-scoped queries, composite foreign keys | Done |
+| backend → Redis | Cache, rate limiter, queues | Internal network only | Done (queues used from Step 4) |
+| Redis → laravel-worker | Queued jobs from ingestion events | — | Planned (Step 4) |
+| Browser → backend | Never direct; always through shopify-app | — | By design |
 
 ---
 
@@ -52,8 +161,8 @@ Boxes in the topology below marked *(planned)* describe the target architecture.
 │                                                                                        │
 │  - VerifyS2SSignature Middleware (Constant-time HMAC, ±300s window, Redis nonce)       │
 │  - Multi-tenant Context Injection ($request->attributes->set('shop_domain', ...))      │
-│  - Typed REST API with Readonly Data Transfer Objects (DTOs) (planned)                 │
-│  - Asynchronous Ingestion & Aggregation Job Dispatcher (planned)                       │
+│  - Ingestion API: FormRequest → Readonly DTO → Pipeline → Guarded Upsert               │
+│  - Ingestion Events → Aggregation Jobs (aggregation planned)                           │
 └───────────────────────────┬─────────────────────────────────────────┬──────────────────┘
                             │                                         │
                             ▼                                         ▼
