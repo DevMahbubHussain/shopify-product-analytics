@@ -71,3 +71,6 @@ backend/storage/logs/*
 
 # Coverage / Reports
 coverage/
+
+# Shopify CLI local app config (real client_id)
+shopify.app.local.toml

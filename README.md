@@ -5,14 +5,14 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 2. **Analytics & Data Processing Engine (Backend):** Laravel 13 REST API, PostgreSQL 16, Redis 7, and dedicated background queue workers.
 3. **Cryptographic S2S Trust Boundary:** Deterministic HMAC-SHA256 request signing with timestamp + single-use nonce replay protection and tenant context binding.
 
-> **Starting a new Shopify app from this repo?** Follow [STARTER.md](STARTER.md) (tag `v0.3.0-starter`).
+> **Starting a new Shopify app from this repo?** Follow [STARTER.md](STARTER.md) (tag `v0.3.1-starter`).
 
 ### Current Status
 
 | Area | Status |
 |---|---|
 | Docker stack, env/secrets handling, S2S boundary, test harness | Done |
-| Shopify app config (`shopify.app.toml`, API `2026-10`, managed install) | Done |
+| Shopify app config (`shopify.app.toml` template + gitignored `shopify.app.local.toml`, API `2026-10`, managed install) | Done |
 | React Router OAuth, session storage, Polaris UI, webhooks | Planned (gateway is currently a minimal Node server) |
 | Domain schema, ingestion pipeline, aggregation, analytics API | Planned |
 
@@ -158,6 +158,7 @@ Compose injects no Laravel environment into `backend` or `laravel-worker`, so th
    SHOPIFY_APP_URL=http://localhost:3000
    ```
    `SHOPIFY_API_SECRET` lives only in the root `.env`; Laravel never receives Shopify credentials.
+   The committed `shopify-app/shopify.app.toml` keeps a placeholder `client_id`; put the real one in the gitignored `shopify-app/shopify.app.local.toml` and run the CLI with `--config local` (see [STARTER.md](STARTER.md#4-create-the-app-in-the-shopify-dev-dashboard)).
 4. Values that must match across the two files: `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
 
 ### Step 3: Install Dependencies and Launch Containers
@@ -255,9 +256,9 @@ docker compose exec redis redis-cli ping
 
 ## 6. Using as a Starter Template for Any Shopify App
 
-The full step-by-step guide lives in [STARTER.md](STARTER.md): fresh-history clone of `v0.3.0-starter`, identifiers to rename, Dev Dashboard app creation, env files, boot and verification, and the recommended build order.
+The full step-by-step guide lives in [STARTER.md](STARTER.md): fresh-history clone of `v0.3.1-starter`, identifiers to rename, Dev Dashboard app creation, env files, boot and verification, and the recommended build order.
 
 ```bash
-git clone --branch v0.3.0-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
+git clone --branch v0.3.1-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
 cd my-shopify-app && rm -rf .git && git init -b main
 ```

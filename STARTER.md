@@ -1,6 +1,6 @@
 # Starter Guide — New Shopify App from This Template
 
-Use tag `v0.3.0-starter` to bootstrap any embedded Shopify app that needs a Laravel backend, PostgreSQL, Redis queues, and a signed service-to-service boundary.
+Use tag `v0.3.1-starter` to bootstrap any embedded Shopify app that needs a Laravel backend, PostgreSQL, Redis queues, and a signed service-to-service boundary.
 
 ---
 
@@ -38,7 +38,7 @@ If `docker compose` fails with `docker-credential-desktop: executable file not f
 ## 2. Clone With Fresh History
 
 ```bash
-git clone --branch v0.3.0-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
+git clone --branch v0.3.1-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
 cd my-shopify-app
 rm -rf .git && git init -b main
 ```
@@ -81,10 +81,21 @@ Dev Dashboard → Apps → Create an app:
 
 Release the version, then copy the **Client ID** and **Client secret** from Settings.
 
-Update `shopify-app/shopify.app.toml`:
+Two app config files:
+
+| File | Committed | Holds |
+|---|---|---|
+| `shopify-app/shopify.app.toml` | Yes | Template: name, handle, scopes, API version; `client_id` stays a placeholder |
+| `shopify-app/shopify.app.local.toml` | No (gitignored) | Same content with your real `client_id` |
+
+```bash
+cp shopify-app/shopify.app.toml shopify-app/shopify.app.local.toml
+```
+
+Edit both (real `client_id` only in the local file):
 
 ```toml
-client_id = "<your 32-char client id>"   # public value
+client_id = "<your 32-char client id>"   # local file only
 name = "<your app name>"
 handle = "<your-app-handle>"
 
@@ -94,6 +105,8 @@ scopes = "<same scopes as the dashboard>"
 [webhooks]
 api_version = "<latest stable>"
 ```
+
+Run Shopify CLI against the local config with `--config local` (for example `shopify app dev --config local`), or make it the default once with `shopify app config use local`. Keep shared fields (scopes, API version, webhooks) identical in both files.
 
 Verify the current stable API version at https://shopify.dev/docs/api/usage/versioning before pinning.
 

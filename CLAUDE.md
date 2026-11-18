@@ -176,6 +176,7 @@ Errors:    401 {"error": "..."} for missing headers, malformed nonce, stale time
 - Root `.env` is compose interpolation only: `DB_*` for `postgres`, `S2S_SHARED_SECRET` for `shopify-app`. `${VAR:?}` fails fast. Keep `S2S_SHARED_SECRET` and `DB_*` equal in both files.
 - Redis prefixes explicit: `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`. Cache data in Redis db1, cache locks on `default` connection db0.
 - No secret values in tracked files. Templates: `.env.example`, `backend/.env.example`.
+- `shopify-app/shopify.app.toml` is the committed template with a placeholder `client_id`. The real `client_id` lives in gitignored `shopify-app/shopify.app.local.toml`; run Shopify CLI with `--config local`. Keep shared fields identical in both.
 - Docker on this machine runs via Colima: `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`.
 
 ### Test environment
