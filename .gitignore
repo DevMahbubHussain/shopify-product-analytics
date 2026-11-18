@@ -74,3 +74,10 @@ coverage/
 
 # Shopify CLI local app config (real client_id)
 shopify.app.local.toml
+
+# Assistant integration files shipped by the Shopify app template (kept local, not committed)
+/shopify-app/AGENTS.md
+/shopify-app/CLAUDE.md
+/shopify-app/.cursor/
+/shopify-app/.gemini/
+/shopify-app/.mcp.json

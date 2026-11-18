@@ -1,25 +1,80 @@
-# Shopify App Configuration
-# Pinned API version: 2026-10 (latest stable, accessible until 2027-10-16)
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-# Template config. Keep client_id as a placeholder here; put the real one in the gitignored
-# shopify.app.local.toml (see STARTER.md). The client secret lives only in root .env.
 client_id = "REPLACE_WITH_DEV_DASHBOARD_CLIENT_ID"
-name = "Product Analytics"
-handle = "product-analytics"
-application_url = "http://localhost:3000"
+application_url = "https://example.com"
 embedded = true
+name = "Product Analytics"
 
 [access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_products,read_orders"
+optional_scopes = [ ]
+use_legacy_install_flow = false
 
-[auth]
-redirect_urls = [
-  "http://localhost:3000/auth/callback",
-  "http://localhost:3000/auth/shopify/callback"
-]
+[product.metafields.app.demo_info]
+type = "single_line_text_field"
+name = "Demo Source Info"
+description = "Tracks products created by the Shopify app template for development"
+
+  [product.metafields.app.demo_info.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example]
+name = "Example"
+description = "An example metaobject definition created by this template"
+
+  [metaobjects.app.example.access]
+  admin = "merchant_read_write"
+
+[metaobjects.app.example.fields.title]
+name = "Title"
+type = "single_line_text_field"
+required = true
+
+[metaobjects.app.example.fields.description]
+name = "Description"
+type = "multi_line_text_field"
 
 [webhooks]
 api_version = "2026-10"
 
-[pos]
-embedded = false
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[events]
+api_version = "2026-10"
+
+  [[events.subscription]]
+  handle = "product-price-change"
+  topic = "Product"
+  actions = [ "update" ]
+  triggers = [ "product.variants.price", "product.variants.compareAtPrice" ]
+  uri = "/webhooks/products/update"
+  query = """
+  query product_variant_price_change($productId: ID!, $variantsId: ID!) {
+    product(id: $productId) {
+      id
+      title
+      status
+    }
+    productVariant(id: $variantsId) {
+      id
+      title
+      price
+      compareAtPrice
+    }
+  }
+  """
+  query_filter = "product.status:'ACTIVE'"
+
+[auth]
+redirect_urls = [ ]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true
