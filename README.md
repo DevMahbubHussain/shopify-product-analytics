@@ -234,7 +234,7 @@ This repository serves as a boilerplate for building any Shopify application req
 ### How to Initialize a New Project from this Template:
 1. Clone the starter tag:
    ```bash
-   git clone --branch v0.1.0-starter https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
+   git clone --branch v0.2.0-starter https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
    cd my-shopify-app
    git checkout -b main
    ```
