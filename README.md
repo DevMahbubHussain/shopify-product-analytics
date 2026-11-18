@@ -3,7 +3,20 @@
 An enterprise-ready, containerized, multi-tenant Shopify application architecture featuring a decoupled dual-runtime stack:
 1. **Shopify App Gateway (Frontend & Webhook Ingestion):** Node.js 20 / TypeScript with Shopify App Bridge and GraphQL Admin API.
 2. **Analytics & Data Processing Engine (Backend):** Laravel 13 REST API, PostgreSQL 16, Redis 7, and dedicated background queue workers.
-3. **Cryptographic S2S Trust Boundary:** Deterministic HMAC-SHA256 request signing with anti-replay protection and automatic tenant isolation.
+3. **Cryptographic S2S Trust Boundary:** Deterministic HMAC-SHA256 request signing with timestamp + single-use nonce replay protection and tenant context binding.
+
+> **Starting a new Shopify app from this repo?** Follow [STARTER.md](STARTER.md) (tag `v0.3.0-starter`).
+
+### Current Status
+
+| Area | Status |
+|---|---|
+| Docker stack, env/secrets handling, S2S boundary, test harness | Done |
+| Shopify app config (`shopify.app.toml`, API `2026-10`, managed install) | Done |
+| React Router OAuth, session storage, Polaris UI, webhooks | Planned (gateway is currently a minimal Node server) |
+| Domain schema, ingestion pipeline, aggregation, analytics API | Planned |
+
+Boxes in the topology below marked *(planned)* describe the target architecture.
 
 ---
 
@@ -21,9 +34,9 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 │  Shopify App Gateway (Node.js 20 / TypeScript)                                         │
 │  Container: spa_shopify_app | Port: 3000                                               │
 │                                                                                        │
-│  - Session Storage & OAuth 2.0 Token Exchange                                          │
-│  - Polaris UI & App Bridge Actions                                                     │
-│  - Webhook Ingestion & HMAC Verification                                               │
+│  - Session Storage & OAuth 2.0 Token Exchange (planned)                                │
+│  - Polaris UI & App Bridge Actions (planned)                                           │
+│  - Webhook Ingestion & HMAC Verification (planned)                                     │
 │  - Cryptographic S2S Client (HMAC-SHA256 Signing + Correlation IDs)                    │
 └─────────────────────────────────────────────┬──────────────────────────────────────────┘
                                               │ Internal Network (S2S Signed Traffic)
@@ -38,9 +51,9 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 │  Container: spa_backend | Port: 8000                                                   │
 │                                                                                        │
 │  - VerifyS2SSignature Middleware (Constant-time HMAC, ±300s window, Redis nonce)       │
-│  - Multi-tenant Context Injection ($request->attributes->set('shop_domain', ...))       │
-│  - Typed REST API with Readonly Data Transfer Objects (DTOs)                           │
-│  - Asynchronous Ingestion & Aggregation Job Dispatcher                                │
+│  - Multi-tenant Context Injection ($request->attributes->set('shop_domain', ...))      │
+│  - Typed REST API with Readonly Data Transfer Objects (DTOs) (planned)                 │
+│  - Asynchronous Ingestion & Aggregation Job Dispatcher (planned)                       │
 └───────────────────────────┬─────────────────────────────────────────┬──────────────────┘
                             │                                         │
                             ▼                                         ▼
@@ -114,6 +127,7 @@ The shared secret is `S2S_SHARED_SECRET`. Both sides refuse to run without it; t
 Run Colima with native virtualization and high-speed filesystem mounting:
 ```bash
 colima start --cpu 4 --memory 8 --disk 60 --vm-type=vz --mount-type=virtiofs
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock   # if docker cannot find the daemon
 ```
 
 ### Step 2: Configure Environment Files
@@ -122,7 +136,7 @@ Secrets are never committed. Two gitignored files, each with one job:
 | File | Read by | Holds |
 |---|---|---|
 | `backend/.env` | Every Laravel process (HTTP server, queue worker, CLI, tests) | All Laravel config: `APP_KEY`, DB, Redis, prefixes, `S2S_SHARED_SECRET` |
-| `.env` (root) | `docker compose` interpolation only | `DB_*` for the `postgres` container, `S2S_SHARED_SECRET` for `shopify-app` |
+| `.env` (root) | `docker compose` interpolation only | `DB_*` for `postgres`; `S2S_SHARED_SECRET`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`, `SHOPIFY_APP_URL` for `shopify-app` |
 
 Compose injects no Laravel environment into `backend` or `laravel-worker`, so the HTTP server and the worker always resolve identical config (same `APP_NAME`, `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`), which keeps cache keys and Redis locks shared across processes.
 
@@ -136,11 +150,23 @@ Compose injects no Laravel environment into `backend` or `laravel-worker`, so th
    echo "APP_KEY=base64:$(openssl rand -base64 32)"   # backend/.env only
    echo "S2S_SHARED_SECRET=$(openssl rand -hex 32)"   # same value in .env and backend/.env
    ```
-3. Values that must match across the two files: `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
+3. Fill the Shopify values in the root `.env` from Dev Dashboard → App → Settings:
+   ```dotenv
+   SHOPIFY_API_KEY=<client id>
+   SHOPIFY_API_SECRET=<client secret>
+   SCOPES=read_products,read_orders
+   SHOPIFY_APP_URL=http://localhost:3000
+   ```
+   `SHOPIFY_API_SECRET` lives only in the root `.env`; Laravel never receives Shopify credentials.
+4. Values that must match across the two files: `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
 
-### Step 3: Launch Containers
+### Step 3: Install Dependencies and Launch Containers
+Images do not bundle dependencies (source is bind-mounted):
 ```bash
-docker compose up -d --build
+docker compose build
+docker compose run --rm --no-deps backend composer install
+docker compose run --rm --no-deps shopify-app npm install
+docker compose up -d
 ```
 
 Verify service status:
@@ -229,18 +255,9 @@ docker compose exec redis redis-cli ping
 
 ## 6. Using as a Starter Template for Any Shopify App
 
-This repository serves as a boilerplate for building any Shopify application requiring a scalable background processing engine.
+The full step-by-step guide lives in [STARTER.md](STARTER.md): fresh-history clone of `v0.3.0-starter`, identifiers to rename, Dev Dashboard app creation, env files, boot and verification, and the recommended build order.
 
-### How to Initialize a New Project from this Template:
-1. Clone the starter tag:
-   ```bash
-   git clone --branch v0.2.0-starter https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
-   cd my-shopify-app
-   git checkout -b main
-   ```
-2. Configure `shopify-app/shopify.app.toml`:
-   - Set your `client_id`, app name, and OAuth scopes (`read_products`, `read_orders`, etc.).
-3. Define your domain models & migrations in `backend/database/migrations`.
-4. Implement your domain DTOs in `backend/app/DTOs`.
-5. Connect your App Bridge views in `shopify-app/app/routes/`.
-
+```bash
+git clone --branch v0.3.0-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
+cd my-shopify-app && rm -rf .git && git init -b main
+```

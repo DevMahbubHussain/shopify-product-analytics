@@ -1,9 +1,10 @@
 # Shopify App Configuration
-# Pinned API version: 2024-10 (stable)
+# Pinned API version: 2026-10 (latest stable, accessible until 2027-10-16)
 
-client_id = ""
-name = "Shopify Product Analytics"
-handle = "shopify-product-analytics"
+# Client ID from the Dev Dashboard; public value. The secret lives only in root .env.
+client_id = "73ef1c69d18af921bc0fe7a6e141f41b"
+name = "Product Analytics"
+handle = "product-analytics"
 application_url = "http://localhost:3000"
 embedded = true
 
@@ -17,7 +18,7 @@ redirect_urls = [
 ]
 
 [webhooks]
-api_version = "2024-10"
+api_version = "2026-10"
 
 [pos]
 embedded = false

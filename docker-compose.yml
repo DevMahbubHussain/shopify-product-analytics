@@ -89,6 +89,10 @@ services:
       PORT: 3000
       BACKEND_API_URL: http://backend:8000
       S2S_SHARED_SECRET: ${S2S_SHARED_SECRET:?Set S2S_SHARED_SECRET in .env}
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:?Set SHOPIFY_API_KEY in .env}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:?Set SHOPIFY_API_SECRET in .env}
+      SCOPES: ${SCOPES:?Set SCOPES in .env}
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:?Set SHOPIFY_APP_URL in .env}
     depends_on:
       - backend
     networks:
