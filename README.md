@@ -14,8 +14,8 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 | Docker stack, env/secrets handling, S2S boundary, test harness | Done |
 | Shopify app config (`shopify.app.toml` template + gitignored `shopify.app.local.toml`, API `2026-10`, managed install) | Done |
 | Multi-tenant domain schema (10 tables) | Done |
-| Ingestion API (6 signed endpoints) | Done |
-| Embedded Shopify app: official React Router template, Postgres sessions, S2S signer, install → Laravel shop registration | Done (Step 3, group B) |
+| Ingestion API (8 signed endpoints) | Done |
+| Embedded Shopify app: official React Router template, Postgres sessions, S2S signer, install and uninstall synced to Laravel | Done (Step 3, groups B–C) |
 | Shopify data sync (GraphQL harvester, normalizers, analytics webhooks), Polaris dashboard | Planned |
 | Metric aggregation, analytics REST API, billing, exports | Planned |
 
@@ -57,12 +57,14 @@ Each feature lists what it provides, where it lives, and how it talks to the res
 
 ### 3. Ingestion API
 
-**Provides:** six private endpoints through which the gateway pushes Shopify data into Laravel:
+**Provides:** eight private endpoints through which the gateway pushes Shopify data into Laravel:
 
 | Endpoint | Purpose |
 |---|---|
 | `POST /internal/v1/ingestion/shop` | Install, refresh, or reactivate a store |
+| `POST /internal/v1/ingestion/shop-uninstall` | Mark a store uninstalled (ignores late deliveries after reinstall) |
 | `POST /internal/v1/ingestion/products` | Upsert products with variants |
+| `POST /internal/v1/ingestion/products-delete` | Soft-delete products and their variants; history kept |
 | `POST /internal/v1/ingestion/orders` | Upsert orders with line items |
 | `POST /internal/v1/ingestion/refunds` | Upsert refund lines |
 | `POST /internal/v1/ingestion/webhook-events` | Record a webhook delivery and detect repeats |
@@ -95,6 +97,7 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 - **Install and authentication:** Shopify-managed install; `authenticate.admin()` validates each merchant request and handles token exchange.
 - **Session storage:** each store's access token is stored server-side (Prisma `Session` table in PostgreSQL database `shopify_sessions`) and never leaves `shopify-app` (C2).
 - **Shop registration:** after install or re-authentication, the `afterAuth` hook reads `shop { id currencyCode ianaTimezone }` and registers the store in Laravel (`/internal/v1/ingestion/shop`).
+- **Uninstall sync:** the `app/uninstalled` webhook is verified by HMAC only (no token refresh), Laravel records the uninstall at Shopify's trigger time, and only then are the store's sessions deleted. Late deliveries after a reinstall leave the shop and its token intact. Details: [docs/shop-lifecycle.md](docs/shop-lifecycle.md).
 - **Embedded UI shell:** App Bridge layout inside Shopify Admin (`app/routes/app.tsx`), with routes created from file names.
 - **Verified webhooks:** `authenticate.webhook()` checks Shopify's `X-Shopify-Hmac-Sha256` signature before any handler code runs.
 - **GraphQL Admin API client:** `admin.graphql()` with the store's token.
@@ -105,9 +108,10 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 | Sessions | `shopify-app/prisma/schema.prisma`, `prisma/migrations/`, `app/db.server.ts` | PostgreSQL `Session` table holding store tokens |
 | S2S signer | `shopify-app/app/services/backendClient.server.ts` | Signs every request to Laravel |
 | Shop registration | `shopify-app/app/services/registerShop.server.ts` | Shop query → `ingestion/shop` |
+| Uninstall sync | `shopify-app/app/services/{verifyWebhook,uninstallShop,appUninstalled}.server.ts` | HMAC check, signed `ingestion/shop-uninstall`, Laravel-first session cleanup |
 | Install/login callbacks | `shopify-app/app/routes/auth.$.tsx` | Shopify `/auth/*` flow |
 | Admin layout | `shopify-app/app/routes/app.tsx` | Authenticates the merchant, starts App Bridge, nav |
-| Webhooks | `shopify-app/app/routes/webhooks.*.tsx` | Verified `app/uninstalled`, `app/scopes_update` handlers |
+| Webhooks | `shopify-app/app/routes/webhooks.*.tsx` | `app/uninstalled` (HMAC-only, synced to Laravel), `app/scopes_update` (template) |
 | App config | `shopify-app/shopify.app.toml` (placeholder `client_id`) + gitignored `shopify.app.local.toml` (real `client_id`) | Scopes `read_products,read_orders`, webhooks API `2026-10`, managed install |
 | Dev runner | `shopify-app/shopify.web.toml` | How `shopify app dev` starts the server; loads `shopify-app/.env` via `--env-file-if-exists` |
 | Container | `shopify-app/Dockerfile`, `.dockerignore` | Production build under compose profile `app`; no secrets in the image |
@@ -127,8 +131,7 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 | 4 | Ported the S2S signer and its tests (`npm test`) | Talk to Laravel |
 | 5 | After install → `ingestion/shop` | Laravel knows every installed store |
 | 6 | Node 22 container under compose profile `app`; `.dockerignore` keeps secrets out | Template requires Node ≥ 22.12 |
-
-Uninstall → Laravel (mark the shop inactive) arrives with the Laravel uninstall endpoint in the next Step 3 group.
+| 7 | `app/uninstalled` handler: HMAC-only verification, Laravel first, then sessions | The template handler returned 500 once the expiring offline token could no longer be refreshed |
 
 **Starter template:** this state is tagged **`v0.1.0-starter`**: new Shopify projects start with a working, installable embedded app connected to Laravel.
 
@@ -380,7 +383,7 @@ docker compose logs -f shopify-app
 docker compose exec backend ./vendor/bin/pest
 
 # Shopify app (host, inside shopify-app/)
-npm test              # node --test: S2S signer + shop registration
+npm test              # node --test: S2S signer, shop registration, webhook verification, uninstall
 npm run typecheck     # React Router type generation + tsc --noEmit
 npm run lint          # ESLint
 ```

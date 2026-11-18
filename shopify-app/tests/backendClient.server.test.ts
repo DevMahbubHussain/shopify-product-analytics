@@ -1,7 +1,10 @@
 import { afterEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
-import { BackendClient } from "../app/services/backendClient.server.ts";
+import {
+  BackendClient,
+  BackendError,
+} from "../app/services/backendClient.server.ts";
 
 const secret = "test-s2s-secret";
 const shop = "acme-store.myshopify.com";
@@ -120,6 +123,11 @@ test("postInternal throws with the status code on a failed response", async () =
 
   await assert.rejects(
     client.postInternal("/internal/v1/ingestion/products", shop, {}),
-    /\(404\)/,
+    (error: unknown) => {
+      assert.ok(error instanceof BackendError);
+      assert.equal(error.status, 404);
+      assert.match(error.message, /\(404\)/);
+      return true;
+    },
   );
 });

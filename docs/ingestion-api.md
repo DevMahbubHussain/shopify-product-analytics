@@ -37,6 +37,25 @@ Creates the shop on first call, refreshes metadata afterwards, and reactivates a
 
 Response: `{"shop_domain": "acme.myshopify.com", "status": "active"}`.
 
+## `shop-uninstall` — mark a shop uninstalled
+
+Called when Shopify delivers `app/uninstalled`. `uninstalled_at` is the delivery's `X-Shopify-Triggered-At`, so the stored time is when the merchant uninstalled, not when the request arrived.
+
+```json
+{ "uninstalled_at": "2026-11-18T02:30:00Z" }
+```
+
+| Shop state | Result |
+|---|---|
+| Active, `uninstalled_at` after `installed_at` | `status` → `uninstalled`, `uninstalled_at` stored (UTC). Response `{"shop_domain": "...", "status": "uninstalled"}` |
+| Already uninstalled | No change; the first `uninstalled_at` is kept. Same response |
+| `uninstalled_at` earlier than `installed_at` | Late delivery after a reinstall: ignored. Response `"status": "active"` |
+| Never installed | `404 {"error": "Unknown shop."}` |
+
+- Data is kept. Purging happens only on Shopify's `shop/redact` (Step 7).
+- While uninstalled, every tenant-scoped endpoint returns `403`. Calling `shop` again (reinstall) reactivates it.
+- Safe to repeat: Shopify can deliver the same webhook more than once.
+
 ## `products` — products with variants
 
 Up to 100 products per request; each carries its full variant list.
@@ -52,6 +71,19 @@ Up to 100 products per request; each carries its full variant list.
 ```
 
 `status`: `ACTIVE`, `ARCHIVED`, `DRAFT`, `UNLISTED`. A product whose `shopify_updated_at` is older than the stored row is skipped together with its variants (`skipped_stale`).
+
+## `products-delete` — soft delete products
+
+Up to 250 distinct product GIDs per request.
+
+```json
+{ "product_gids": ["gid://shopify/Product/1", "gid://shopify/Product/2"] }
+```
+
+- Sets `deleted_at` on each product and its variants, for the verified shop only. Rows are never removed, so order lines and daily metrics keep their references and history stays reportable.
+- Response uses the batch shape: `written` is the number deleted by this call; `skipped_stale` counts GIDs that were unknown or already deleted. A repeat call is a no-op and keeps the first `deleted_at`.
+- A later `products` upsert for a deleted GID updates its fields but does not restore it.
+- `403` when the shop is not active.
 
 ## `orders` — orders with line items
 
@@ -127,5 +159,6 @@ Create a run (no `sync_run_id`) → `201 {"sync_run_id": "...", "status": "runni
 | Same batch retried | 94 ms |
 | 20 refund lines | 20 ms |
 | 5 stale orders (skipped) | 27 ms |
+| `products-delete`, 250 products / 500 variants in a 50,000-product shop (SQL only, `EXPLAIN ANALYZE`) | 3.2 ms + 9.0 ms |
 
 Order ingestion runs a bounded number of queries regardless of batch size (≤ 12 for 250 lines; enforced by a test). GID lookups use the `(shop_id, gid)` unique indexes (0.12 ms for 50 GIDs against 50,000 products).

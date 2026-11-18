@@ -157,7 +157,7 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ## 7. Current Repository State (verified 2026-11-18)
 
-Steps 1–2 complete and merged to `main`. Step 3 (Shopify integration) in progress on `shopify-integration`: group B (template baseline) done through install → Laravel shop registration. Aggregation listeners for `OrdersIngested` / `RefundsIngested` arrive in Step 4.
+Steps 1–2 complete and merged to `main`. Step 3 (Shopify integration) in progress on `shopify-integration`: group B (template baseline, install → Laravel) and group C (uninstall sync, product soft-delete) done. Aggregation listeners for `OrdersIngested` / `RefundsIngested` arrive in Step 4.
 
 | Area | Actual state |
 |---|---|
@@ -167,10 +167,11 @@ Steps 1–2 complete and merged to `main`. Step 3 (Shopify integration) in progr
 | Correlation | `backend/app/Http/Middleware/AssignCorrelationId.php`, prepended globally; `Context::add('correlation_id')` flows into logs and queued jobs |
 | S2S client | `shopify-app/app/services/backendClient.server.ts` (`backendClient().postInternal`), lazy singleton, throws without env |
 | Shop registration | `shopify-app/app/services/registerShop.server.ts`, called from `hooks.afterAuth` in `app/shopify.server.ts`: Shopify `shop { id currencyCode ianaTimezone }` → `POST /internal/v1/ingestion/shop`; failures propagate (install retried) |
-| Tests | Backend: Pest suites under `backend/tests/Feature/{Security,Database,Ingestion,Infrastructure}`. Gateway: `shopify-app/tests/{backendClient,registerShop}.server.test.ts` via `npm test` (`node --test`) |
+| Shop lifecycle | Laravel: `MarkShopUninstalled` (row lock, keeps first `uninstalled_at`, ignores deliveries triggered before `installed_at`), `SoftDeleteProducts`. Gateway: `webhooks.app.uninstalled.tsx` → `verifyWebhook.server.ts` (HMAC only) → `appUninstalled.server.ts` (Laravel first, sessions deleted only on `uninstalled` or 404) → `uninstallShop.server.ts`. `BackendError` carries the HTTP status. Spec: `docs/shop-lifecycle.md` |
+| Tests | Backend: 159 Pest tests under `backend/tests/Feature/{Security,Database,Ingestion,Infrastructure}`. Gateway: 24 tests in `shopify-app/tests/*.server.test.ts` via `npm test` (`node --test`) |
 | shopify-app | Official React Router template (`@shopify/shopify-app-react-router` 4.x), Admin API `2026-10`, Polaris web components, Prisma sessions in Postgres `shopify_sessions`. Runs on host via `shopify app dev --config local`; optional container under compose profile `app`. Demo code removed; placeholder home page only |
 | Migrations | 10 domain tables; spec in `docs/migrations.md` |
-| Ingestion | `POST /internal/v1/ingestion/{shop,products,orders,refunds,webhook-events,sync-status}` via `IngestionController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
+| Ingestion | `POST /internal/v1/ingestion/{shop,shop-uninstall,products,products-delete,orders,refunds,webhook-events,sync-status}` via `IngestionController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
 | Ingestion internals | FormRequest → readonly DTO (`app/Data/Ingestion`) → pipes; `GuardedUpsert` (ON CONFLICT with `shopify_updated_at` freshness guard), `TenantIdLookup`; VOs `ShopifyGid`, `DecimalAmount`; enums in `app/Enums` |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
 
@@ -179,6 +180,8 @@ Binding rules live in `AGENTS.md` §2.1–2.4 (imported above): env files and se
 
 ### Known open issues
 - Worker command uses `--tries=3`; jobs must still declare `$tries = 5` per C9.3 (job property wins).
+- Do not use `authenticate.webhook` for webhooks that can arrive after uninstall (`app/uninstalled`, `shop/redact`, other privacy topics): with expiring offline tokens it tries a refresh, Shopify refuses it, and the library answers 500 before handler code runs. Use `verifyShopifyWebhook`.
+- A store that installs but never opens the app is unknown to Laravel (`afterAuth` runs on first open); its uninstall gets 404 and is acknowledged.
 
 ## 8. Open Product Decisions (PRD §19)
 

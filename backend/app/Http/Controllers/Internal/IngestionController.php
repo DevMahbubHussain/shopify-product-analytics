@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Internal;
 
+use App\Http\Requests\Internal\DeleteProductsRequest;
 use App\Http\Requests\Internal\IngestOrdersRequest;
 use App\Http\Requests\Internal\IngestProductsRequest;
 use App\Http\Requests\Internal\IngestRefundsRequest;
@@ -11,12 +12,15 @@ use App\Http\Requests\Internal\IngestShopRequest;
 use App\Http\Requests\Internal\IngestionRequest;
 use App\Http\Requests\Internal\RecordWebhookDeliveryRequest;
 use App\Http\Requests\Internal\ReportSyncStatusRequest;
+use App\Http\Requests\Internal\UninstallShopRequest;
 use App\Ingestion\IngestionContext;
 use App\Ingestion\IngestionResponse;
 use App\Ingestion\Pipes\DeduplicateWebhookDelivery;
 use App\Ingestion\Pipes\DispatchIngestedEvents;
+use App\Ingestion\Pipes\MarkShopUninstalled;
 use App\Ingestion\Pipes\RecordSyncStatus;
 use App\Ingestion\Pipes\ResolveShopTenant;
+use App\Ingestion\Pipes\SoftDeleteProducts;
 use App\Ingestion\Pipes\UpsertOrderBatch;
 use App\Ingestion\Pipes\UpsertProductBatch;
 use App\Ingestion\Pipes\UpsertRefundBatch;
@@ -31,9 +35,19 @@ final class IngestionController
         return $this->run($request, $request->toDto(), [UpsertShop::class]);
     }
 
+    public function shopUninstall(UninstallShopRequest $request): JsonResponse
+    {
+        return $this->run($request, $request->toDto(), [MarkShopUninstalled::class]);
+    }
+
     public function products(IngestProductsRequest $request): JsonResponse
     {
         return $this->run($request, $request->toDto(), [ResolveShopTenant::class, UpsertProductBatch::class, DispatchIngestedEvents::class]);
+    }
+
+    public function productsDelete(DeleteProductsRequest $request): JsonResponse
+    {
+        return $this->run($request, $request->toDto(), [ResolveShopTenant::class, SoftDeleteProducts::class]);
     }
 
     public function orders(IngestOrdersRequest $request): JsonResponse

@@ -62,7 +62,9 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(function () {
         ->controller(IngestionController::class)
         ->group(function (): void {
             Route::post('shop', 'shop');
+            Route::post('shop-uninstall', 'shopUninstall');
             Route::post('products', 'products');
+            Route::post('products-delete', 'productsDelete');
             Route::post('orders', 'orders');
             Route::post('refunds', 'refunds');
             Route::post('webhook-events', 'webhookEvents');

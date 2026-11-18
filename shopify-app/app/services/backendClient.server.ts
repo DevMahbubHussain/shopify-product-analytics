@@ -5,6 +5,16 @@ export interface BackendClientConfig {
   secret: string;
 }
 
+export class BackendError extends Error {
+  public readonly status: number;
+
+  public constructor(status: number, body: string) {
+    super(`Backend S2S call failed (${status}): ${body}`);
+    this.name = "BackendError";
+    this.status = status;
+  }
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (value === undefined || value === "") {
@@ -83,10 +93,7 @@ export class BackendClient {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Backend S2S call failed (${response.status}): ${errorText}`,
-      );
+      throw new BackendError(response.status, await response.text());
     }
 
     return (await response.json()) as TResponse;
