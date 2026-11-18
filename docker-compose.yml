@@ -4,9 +4,9 @@ services:
     container_name: spa_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: shopify_analytics
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: ${DB_DATABASE:-shopify_analytics}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -14,7 +14,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d shopify_analytics"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -49,20 +49,20 @@ services:
     environment:
       APP_NAME: "Shopify Product Analytics"
       APP_ENV: local
-      APP_KEY: base64:aZW+dmYlaT8Mzge+r3DfWVrg/JQEmjkg3OPT76uYN3I=
+      APP_KEY: ${APP_KEY:?Set APP_KEY in .env}
       APP_DEBUG: "true"
       APP_URL: http://localhost:8000
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_DATABASE: shopify_analytics
-      DB_USERNAME: postgres
-      DB_PASSWORD: secret
+      DB_DATABASE: ${DB_DATABASE:-shopify_analytics}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       CACHE_STORE: redis
       QUEUE_CONNECTION: redis
-      S2S_SHARED_SECRET: 7f8c9b2a1e4d5f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8e0f2a4b6c8d0e2f4
+      S2S_SHARED_SECRET: ${S2S_SHARED_SECRET:?Set S2S_SHARED_SECRET in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -84,19 +84,19 @@ services:
     environment:
       APP_NAME: "Shopify Product Analytics"
       APP_ENV: local
-      APP_KEY: base64:aZW+dmYlaT8Mzge+r3DfWVrg/JQEmjkg3OPT76uYN3I=
+      APP_KEY: ${APP_KEY:?Set APP_KEY in .env}
       APP_DEBUG: "true"
       DB_CONNECTION: pgsql
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_DATABASE: shopify_analytics
-      DB_USERNAME: postgres
-      DB_PASSWORD: secret
+      DB_DATABASE: ${DB_DATABASE:-shopify_analytics}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       CACHE_STORE: redis
       QUEUE_CONNECTION: redis
-      S2S_SHARED_SECRET: 7f8c9b2a1e4d5f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8e0f2a4b6c8d0e2f4
+      S2S_SHARED_SECRET: ${S2S_SHARED_SECRET:?Set S2S_SHARED_SECRET in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,7 +120,7 @@ services:
       NODE_ENV: development
       PORT: 3000
       BACKEND_API_URL: http://backend:8000
-      S2S_SHARED_SECRET: 7f8c9b2a1e4d5f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8e0f2a4b6c8d0e2f4
+      S2S_SHARED_SECRET: ${S2S_SHARED_SECRET:?Set S2S_SHARED_SECRET in .env}
     depends_on:
       - backend
     networks:

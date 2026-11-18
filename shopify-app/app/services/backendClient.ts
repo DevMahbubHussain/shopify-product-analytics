@@ -12,37 +12,46 @@ export interface PingResponse {
   timestamp: number;
 }
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    throw new Error(`${name} environment variable is required.`);
+  }
+  return value;
+}
+
+function normalizePath(path: string): string {
+  return "/" + path.replace(/^\/+/, "");
+}
+
 export class BackendClient {
   private readonly baseUrl: string;
   private readonly secret: string;
 
   public constructor(config?: Partial<S2SClientConfig>) {
-    this.baseUrl = (
-      config?.baseUrl ??
-      process.env["BACKEND_API_URL"] ??
-      "http://localhost:8000"
-    ).replace(/\/+$/, "");
-
-    this.secret =
-      config?.secret ??
-      process.env["S2S_SHARED_SECRET"] ??
-      "7f8c9b2a1e4d5f6a8b0c2d4e6f8a0b2c4d6e8f0a2b4c6d8e0f2a4b6c8d0e2f4";
+    this.baseUrl = (config?.baseUrl ?? requireEnv("BACKEND_API_URL")).replace(/\/+$/, "");
+    this.secret = config?.secret ?? requireEnv("S2S_SHARED_SECRET");
   }
 
   public generateSignature(
     method: string,
     path: string,
     timestamp: number,
+    nonce: string,
     shopDomain: string,
     body: string
   ): string {
-    const normalizedPath = "/" + path.replace(/^\/+/, "");
     const bodyHash = createHash("sha256").update(body).digest("hex");
-    const canonicalPayload = `${method.toUpperCase()}\n${normalizedPath}\n${timestamp}\n${shopDomain}\n${bodyHash}`;
+    const canonicalPayload = [
+      method.toUpperCase(),
+      normalizePath(path),
+      timestamp.toString(),
+      nonce,
+      shopDomain,
+      bodyHash,
+    ].join("\n");
 
-    return createHmac("sha256", this.secret)
-      .update(canonicalPayload)
-      .digest("hex");
+    return createHmac("sha256", this.secret).update(canonicalPayload).digest("hex");
   }
 
   public async ping(shopDomain: string): Promise<PingResponse> {
@@ -56,19 +65,13 @@ export class BackendClient {
   public async postInternal<TResponse, TBody extends object>(
     path: string,
     shopDomain: string,
-    body: TBody
+    body: TBody,
+    correlationId: string = randomUUID()
   ): Promise<TResponse> {
-    const normalizedPath = "/" + path.replace(/^\/+/, "");
+    const normalizedPath = normalizePath(path);
     const timestamp = Math.floor(Date.now() / 1000);
+    const nonce = randomUUID();
     const bodyString = JSON.stringify(body);
-    const signature = this.generateSignature(
-      "POST",
-      normalizedPath,
-      timestamp,
-      shopDomain,
-      bodyString
-    );
-    const correlationId = randomUUID();
 
     const response = await fetch(`${this.baseUrl}${normalizedPath}`, {
       method: "POST",
@@ -77,7 +80,8 @@ export class BackendClient {
         Accept: "application/json",
         "X-App-Shop-Domain": shopDomain,
         "X-App-Timestamp": timestamp.toString(),
-        "X-App-Signature": signature,
+        "X-App-Nonce": nonce,
+        "X-App-Signature": this.generateSignature("POST", normalizedPath, timestamp, nonce, shopDomain, bodyString),
         "X-Correlation-ID": correlationId,
       },
       body: bodyString,
@@ -85,13 +89,16 @@ export class BackendClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `Backend S2S call failed (${response.status}): ${errorText}`
-      );
+      throw new Error(`Backend S2S call failed (${response.status}): ${errorText}`);
     }
 
     return (await response.json()) as TResponse;
   }
 }
 
-export const backendClient = new BackendClient();
+let sharedClient: BackendClient | undefined;
+
+export function backendClient(): BackendClient {
+  sharedClient ??= new BackendClient();
+  return sharedClient;
+}

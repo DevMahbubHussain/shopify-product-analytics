@@ -15,7 +15,7 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/s2s-handshake") {
     try {
       const shopDomain = url.searchParams.get("shop") ?? "test-store.myshopify.com";
-      const result = await backendClient.ping(shopDomain);
+      const result = await backendClient().ping(shopDomain);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ s2s: "verified", backendResponse: result }));
     } catch (err: unknown) {

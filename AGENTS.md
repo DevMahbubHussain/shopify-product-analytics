@@ -186,10 +186,10 @@ flowchart TD
 
 ### Step 1: Foundation & S2S Trust Boundary
 - Scaffold Docker Compose configuration (`shopify-app`, `backend`, `postgres`, `redis`, `laravel-worker`).
-- Scaffold Laravel 11/12 backend skeleton with PostgreSQL and Redis connections.
+- Scaffold Laravel 13 backend skeleton with PostgreSQL and Redis connections.
 - Scaffold React Router Shopify embedded app skeleton using `@shopify/shopify-app-react-router` and `@shopify/polaris`.
 - Build and test the Service-to-Service (S2S) HMAC-SHA256 authentication middleware in Laravel and client signer in React Router.
-- Verify request replay protection (timestamp tolerance ±300 seconds) and nonce verification.
+- Verify request replay protection (timestamp tolerance ±300 seconds, inclusive) and single-use nonce verification (`X-App-Nonce`, Redis-claimed).
 
 ### Step 2: Database Schema & Ingestion Pipeline
 - Author PostgreSQL migrations for core tables:

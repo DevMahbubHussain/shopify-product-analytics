@@ -2,7 +2,7 @@
 
 An enterprise-ready, containerized, multi-tenant Shopify application architecture featuring a decoupled dual-runtime stack:
 1. **Shopify App Gateway (Frontend & Webhook Ingestion):** Node.js 20 / TypeScript with Shopify App Bridge and GraphQL Admin API.
-2. **Analytics & Data Processing Engine (Backend):** Laravel 11/12 REST API, PostgreSQL 16, Redis 7, and dedicated background queue workers.
+2. **Analytics & Data Processing Engine (Backend):** Laravel 13 REST API, PostgreSQL 16, Redis 7, and dedicated background queue workers.
 3. **Cryptographic S2S Trust Boundary:** Deterministic HMAC-SHA256 request signing with anti-replay protection and automatic tenant isolation.
 
 ---
@@ -27,16 +27,17 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 │  - Cryptographic S2S Client (HMAC-SHA256 Signing + Correlation IDs)                    │
 └─────────────────────────────────────────────┬──────────────────────────────────────────┘
                                               │ Internal Network (S2S Signed Traffic)
-                                              │ Headers: X-Shopify-Shop-Domain,
-                                              │          X-S2S-Timestamp,
-                                              │          X-S2S-Signature,
+                                              │ Headers: X-App-Shop-Domain,
+                                              │          X-App-Timestamp,
+                                              │          X-App-Nonce,
+                                              │          X-App-Signature,
                                               │          X-Correlation-ID
                                               ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│  Backend Engine (Laravel 11/12 on PHP 8.3-FPM)                                         │
+│  Backend Engine (Laravel 13 on PHP 8.3 CLI, artisan serve)                             │
 │  Container: spa_backend | Port: 8000                                                   │
 │                                                                                        │
-│  - VerifyS2SSignature Middleware (Constant-time HMAC check, ±300s window)              │
+│  - VerifyS2SSignature Middleware (Constant-time HMAC, ±300s window, Redis nonce)       │
 │  - Multi-tenant Context Injection ($request->attributes->set('shop_domain', ...))       │
 │  - Typed REST API with Readonly Data Transfer Objects (DTOs)                           │
 │  - Asynchronous Ingestion & Aggregation Job Dispatcher                                │
@@ -69,7 +70,7 @@ The stack is containerized with Docker Compose and tuned for macOS virtualizatio
 | **`postgres`** | `spa_postgres` | `postgres:16-alpine` | `5432` | Primary relational datastore | `pg_isready -U postgres` |
 | **`redis`** | `spa_redis` | `redis:7-alpine` | `6379` | Queue broker, cache, rate limits | `redis-cli ping` |
 | **`backend`** | `spa_backend` | `php:8.3-cli` (custom) | `8000` | Laravel REST API application | HTTP `/api/v1/health` |
-| **`laravel-worker`** | `spa_worker` | `php:8.3-cli` (custom) | — | Continuous queue worker (`php artisan queue:listen`) | Process status |
+| **`laravel-worker`** | `spa_worker` | `php:8.3-cli` (custom) | — | Continuous queue worker (`php artisan queue:work redis`) | Process status |
 | **`shopify-app`** | `spa_shopify_app` | `node:20-alpine` (custom) | `3000` | Shopify Gateway & App Bridge server | HTTP `/health` |
 
 ---
@@ -83,6 +84,7 @@ All communication between the Shopify Gateway and the Laravel Backend is secured
 CANONICAL_PAYLOAD = METHOD + "\n" +
                     PATH + "\n" +
                     TIMESTAMP + "\n" +
+                    NONCE + "\n" +
                     SHOP_DOMAIN + "\n" +
                     SHA256(BODY_JSON)
 
@@ -90,10 +92,13 @@ SIGNATURE = HMAC_SHA256(SECRET, CANONICAL_PAYLOAD)
 ```
 
 ### Required Security Headers
-- `X-Shopify-Shop-Domain`: Target merchant store (e.g. `merchant-store.myshopify.com`).
-- `X-S2S-Timestamp`: Unix timestamp (UTC seconds). Replayed or drifted requests $> 300$ seconds are rejected with `401 Unauthorized`.
-- `X-S2S-Signature`: Hex-encoded HMAC-SHA256 hash verified using `hash_equals()`.
-- `X-Correlation-ID`: Unique UUID propagated through gateway, API logs, and queue jobs.
+- `X-App-Shop-Domain`: Target merchant store (e.g. `merchant-store.myshopify.com`).
+- `X-App-Timestamp`: Unix timestamp (UTC seconds). Drift beyond ±300 seconds (inclusive bound, `S2S_TOLERANCE_SECONDS`) is rejected with `401 Unauthorized`.
+- `X-App-Nonce`: UUID, single use. Claimed atomically in Redis (`Cache::store('redis')->add`) for twice the tolerance window after the signature verifies; reuse is rejected with `401 Unauthorized`.
+- `X-App-Signature`: Hex-encoded HMAC-SHA256 of the canonical payload, verified with `hash_equals()`.
+- `X-Correlation-ID`: UUID echoed on every Laravel response, generated when absent or malformed, and attached to log context and queued job payloads via `Context`.
+
+The shared secret is `S2S_SHARED_SECRET`. Both sides refuse to run without it; there is no fallback value.
 
 ---
 
@@ -112,22 +117,24 @@ colima start --cpu 4 --memory 8 --disk 60 --vm-type=vz --mount-type=virtiofs
 ```
 
 ### Step 2: Configure Environment Files
-1. Create the backend `.env`:
+Secrets are never committed. `docker-compose.yml` reads them from the gitignored root `.env` and refuses to start if any are missing.
+
+1. Create both env files:
    ```bash
+   cp .env.example .env
    cp backend/.env.example backend/.env
    ```
-2. Generate keys and secrets:
+2. Generate secrets and write the same values into **both** files:
    ```bash
-   # Generate Laravel APP_KEY
-   cd backend && php artisan key:generate && cd ..
-
-   # Define shared S2S secret (must match in backend and shopify-app)
-   # openssl rand -hex 32
+   echo "APP_KEY=base64:$(openssl rand -base64 32)"
+   echo "S2S_SHARED_SECRET=$(openssl rand -hex 32)"
    ```
-3. Ensure `docker-compose.yml` and `backend/.env` contain matching values:
-   - `DB_HOST=postgres`, `DB_PORT=5432`, `DB_DATABASE=shopify_analytics`, `DB_USERNAME=postgres`, `DB_PASSWORD=postgres`
-   - `REDIS_HOST=redis`, `REDIS_PORT=6379`
-   - `SPA_BACKEND_S2S_SECRET=<your-64-character-hex-secret>`
+3. Values that must match between `.env`, `backend/.env` and the running containers:
+   - `APP_KEY`, `S2S_SHARED_SECRET`
+   - `DB_DATABASE=shopify_analytics`, `DB_USERNAME=postgres`, `DB_PASSWORD=secret`
+   - `DB_HOST=postgres`, `DB_PORT=5432`, `REDIS_HOST=redis`, `REDIS_PORT=6379` (backend only)
+
+> `php artisan serve` strips container environment variables from its HTTP workers (see `ServeCommand::$passthroughVariables`), so the backend HTTP process reads `backend/.env`, while the queue worker and CLI read the compose environment. Keep both in sync.
 
 ### Step 3: Launch Containers
 ```bash
