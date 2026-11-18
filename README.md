@@ -117,24 +117,26 @@ colima start --cpu 4 --memory 8 --disk 60 --vm-type=vz --mount-type=virtiofs
 ```
 
 ### Step 2: Configure Environment Files
-Secrets are never committed. `docker-compose.yml` reads them from the gitignored root `.env` and refuses to start if any are missing.
+Secrets are never committed. Two gitignored files, each with one job:
+
+| File | Read by | Holds |
+|---|---|---|
+| `backend/.env` | Every Laravel process (HTTP server, queue worker, CLI, tests) | All Laravel config: `APP_KEY`, DB, Redis, prefixes, `S2S_SHARED_SECRET` |
+| `.env` (root) | `docker compose` interpolation only | `DB_*` for the `postgres` container, `S2S_SHARED_SECRET` for `shopify-app` |
+
+Compose injects no Laravel environment into `backend` or `laravel-worker`, so the HTTP server and the worker always resolve identical config (same `APP_NAME`, `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`), which keeps cache keys and Redis locks shared across processes.
 
 1. Create both env files:
    ```bash
    cp .env.example .env
    cp backend/.env.example backend/.env
    ```
-2. Generate secrets and write the same values into **both** files:
+2. Generate secrets:
    ```bash
-   echo "APP_KEY=base64:$(openssl rand -base64 32)"
-   echo "S2S_SHARED_SECRET=$(openssl rand -hex 32)"
+   echo "APP_KEY=base64:$(openssl rand -base64 32)"   # backend/.env only
+   echo "S2S_SHARED_SECRET=$(openssl rand -hex 32)"   # same value in .env and backend/.env
    ```
-3. Values that must match between `.env`, `backend/.env` and the running containers:
-   - `APP_KEY`, `S2S_SHARED_SECRET`
-   - `DB_DATABASE=shopify_analytics`, `DB_USERNAME=postgres`, `DB_PASSWORD=secret`
-   - `DB_HOST=postgres`, `DB_PORT=5432`, `REDIS_HOST=redis`, `REDIS_PORT=6379` (backend only)
-
-> `php artisan serve` strips container environment variables from its HTTP workers (see `ServeCommand::$passthroughVariables`), so the backend HTTP process reads `backend/.env`, while the queue worker and CLI read the compose environment. Keep both in sync.
+3. Values that must match across the two files: `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
 
 ### Step 3: Launch Containers
 ```bash
@@ -175,6 +177,8 @@ docker compose logs -f shopify-app
 ### Testing & Quality Control
 ```bash
 # Run Laravel Pest test suite (Feature & Unit tests)
+# Runs on PostgreSQL database shopify_analytics_test (RefreshDatabase) and
+# Redis DBs 2/3 with spa-test-* prefixes; never touches development data.
 docker compose exec backend ./vendor/bin/pest
 
 # Run TypeScript test runner

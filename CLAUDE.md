@@ -156,7 +156,7 @@ Step 1 (Foundation & S2S) complete. Nothing from Step 2+ exists yet.
 | S2S middleware | `backend/app/Http/Middleware/VerifyS2SSignature.php`, aliased `s2s`, sets `shop_domain` request attribute |
 | Correlation | `backend/app/Http/Middleware/AssignCorrelationId.php`, prepended globally; `Context::add('correlation_id')` flows into logs and queued jobs |
 | S2S client | `shopify-app/app/services/backendClient.ts` (`backendClient().postInternal`), lazy singleton, throws without env |
-| Tests | `backend/tests/Feature/Security/{VerifyS2SSignatureTest,CorrelationIdTest}.php`, `shopify-app/tests/s2sHandshake.test.ts` |
+| Tests | `backend/tests/Feature/Security/{VerifyS2SSignatureTest,CorrelationIdTest}.php`, `backend/tests/Feature/Infrastructure/TestEnvironmentIsolationTest.php`, `shopify-app/tests/s2sHandshake.test.ts` |
 | shopify-app | Plain `tsx` server (`app/index.ts`); no React Router routes, `shopify.server.ts`, or Polaris UI yet |
 | Migrations | Only Laravel defaults (users, cache, jobs) |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
@@ -172,14 +172,18 @@ Errors:    401 {"error": "..."} for missing headers, malformed nonce, stale time
 ```
 
 ### Environment and secrets
-- Secrets live only in gitignored root `.env` (compose interpolation, `${VAR:?}` fails fast) and `backend/.env`. Templates: `.env.example`, `backend/.env.example`. No secret values in tracked files.
-- `php artisan serve` strips container env from HTTP workers (`ServeCommand::$passthroughVariables`), so the backend HTTP process reads `backend/.env` while queue worker and CLI read compose env. Keep both in sync.
+- `backend/.env` is the single config source for every Laravel process (HTTP, worker, CLI). Compose injects no Laravel env into `backend` / `laravel-worker`. Reason: `php artisan serve` strips container env from its HTTP workers (`ServeCommand::$passthroughVariables`), so compose env would only reach the worker and split config.
+- Root `.env` is compose interpolation only: `DB_*` for `postgres`, `S2S_SHARED_SECRET` for `shopify-app`. `${VAR:?}` fails fast. Keep `S2S_SHARED_SECRET` and `DB_*` equal in both files.
+- Redis prefixes explicit: `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`. Cache data in Redis db1, cache locks on `default` connection db0.
+- No secret values in tracked files. Templates: `.env.example`, `backend/.env.example`.
 - Docker on this machine runs via Colima: `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`.
 
+### Test environment
+- Pest Feature tests use `RefreshDatabase` on PostgreSQL `shopify_analytics_test` (created by `infrastructure/docker/postgres/initdb/01-create-test-database.sql` on fresh volumes; run it manually with `psql -f` on existing volumes).
+- Tests use Redis db2 (default) / db3 (cache) with `spa-test-*` prefixes. `phpunit.xml` overrides use `force="true"`.
+- `tests/Feature/Infrastructure/TestEnvironmentIsolationTest.php` fails if tests ever point at SQLite, the dev DB, or dev Redis.
+
 ### Known open issues
-- Cache key prefix differs between HTTP process (`APP_NAME` from `backend/.env`) and worker/CLI (`APP_NAME` from compose). Must be aligned before Step 4 locks (`ShouldBeUnique`, `WithoutOverlapping`) or locks will not be shared.
-- `phpunit.xml` uses SQLite in-memory, contradicting C13 (real PostgreSQL). Switch before Step 2 migrations.
-- Pest S2S tests write nonce keys into the dev Redis cache DB (short TTL, harmless, but not isolated).
 - Worker command uses `--tries=3`; jobs must still declare `$tries = 5` per C9.3 (job property wins).
 
 ## 8. Open Product Decisions (PRD §19)
