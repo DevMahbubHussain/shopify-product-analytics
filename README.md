@@ -33,7 +33,7 @@ Each feature lists what it provides, where it lives, and how it talks to the res
 
 | Part | Location |
 |---|---|
-| Request signer | `shopify-app/app/services/backendClient.server.ts` (tests: `shopify-app/tests/backendClient.server.test.ts`) |
+| Request signer | `shopify-app/app/lib/backend/backendClient.server.ts` (test next to it) |
 | Signature, timestamp, and nonce check | `backend/app/Http/Middleware/VerifyS2SSignature.php` |
 | Correlation IDs for tracing | `backend/app/Http/Middleware/AssignCorrelationId.php` |
 
@@ -106,9 +106,9 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 |---|---|---|
 | Shopify setup | `shopify-app/app/shopify.server.ts` | API key/secret, scopes, API version `2026-10`, session storage, `afterAuth` hook |
 | Sessions | `shopify-app/prisma/schema.prisma`, `prisma/migrations/`, `app/db.server.ts` | PostgreSQL `Session` table holding store tokens |
-| S2S signer | `shopify-app/app/services/backendClient.server.ts` | Signs every request to Laravel |
-| Shop registration | `shopify-app/app/services/registerShop.server.ts` | Shop query → `ingestion/shop` |
-| Uninstall sync | `shopify-app/app/services/{verifyWebhook,uninstallShop,appUninstalled}.server.ts` | HMAC check, signed `ingestion/shop-uninstall`, Laravel-first session cleanup |
+| S2S signer | `shopify-app/app/lib/backend/backendClient.server.ts` | Signs every request to Laravel |
+| Shop registration | `shopify-app/app/features/shop-lifecycle/registerShop.server.ts` | Shop query → `ingestion/shop` |
+| Uninstall sync | `shopify-app/app/lib/shopify/verifyWebhook.server.ts`, `shopify-app/app/features/shop-lifecycle/{uninstallShop,appUninstalled}.server.ts` | HMAC check, signed `ingestion/shop-uninstall`, Laravel-first session cleanup |
 | Install/login callbacks | `shopify-app/app/routes/auth.$.tsx` | Shopify `/auth/*` flow |
 | Admin layout | `shopify-app/app/routes/app.tsx` | Authenticates the merchant, starts App Bridge, nav |
 | Webhooks | `shopify-app/app/routes/webhooks.*.tsx` | `app/uninstalled` (HMAC-only, synced to Laravel), `app/scopes_update` (template) |

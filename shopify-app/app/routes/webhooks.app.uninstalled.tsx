@@ -1,8 +1,8 @@
 import type { ActionFunctionArgs } from "react-router";
 import db from "../db.server";
-import { handleAppUninstalled } from "../services/appUninstalled.server";
-import { uninstallShop } from "../services/uninstallShop.server";
-import { verifyShopifyWebhook } from "../services/verifyWebhook.server";
+import { handleAppUninstalled } from "../features/shop-lifecycle/appUninstalled.server";
+import { uninstallShop } from "../features/shop-lifecycle/uninstallShop.server";
+import { verifyShopifyWebhook } from "../lib/shopify/verifyWebhook.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const webhook = await verifyShopifyWebhook(request);

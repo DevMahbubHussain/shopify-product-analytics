@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { verifyShopifyWebhook } from "../app/services/verifyWebhook.server.ts";
+import { verifyShopifyWebhook } from "./verifyWebhook.server.ts";
 
 const secret = "test-app-secret";
 const shop = "acme-store.myshopify.com";

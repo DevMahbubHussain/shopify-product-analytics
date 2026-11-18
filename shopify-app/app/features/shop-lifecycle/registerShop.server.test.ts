@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerShop } from "../app/services/registerShop.server.ts";
+import { registerShop } from "./registerShop.server.ts";
 
 const shopDomain = "acme-store.myshopify.com";
 

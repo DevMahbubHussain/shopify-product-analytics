@@ -1,4 +1,7 @@
-import { backendClient, type BackendClient } from "./backendClient.server.ts";
+import {
+  backendClient,
+  type BackendClient,
+} from "../../lib/backend/backendClient.server.ts";
 
 export interface UninstalledShop {
   shop_domain: string;

@@ -1,6 +1,6 @@
-import { BackendError } from "./backendClient.server.ts";
+import { BackendError } from "../../lib/backend/backendClient.server.ts";
 import type { UninstalledShop } from "./uninstallShop.server.ts";
-import type { VerifiedWebhook } from "./verifyWebhook.server.ts";
+import type { VerifiedWebhook } from "../../lib/shopify/verifyWebhook.server.ts";
 
 export interface AppUninstalledDeps {
   uninstall(shop: string, triggeredAt: string | null): Promise<UninstalledShop>;

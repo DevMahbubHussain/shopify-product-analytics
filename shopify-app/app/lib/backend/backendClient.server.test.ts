@@ -1,10 +1,7 @@
 import { afterEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
-import {
-  BackendClient,
-  BackendError,
-} from "../app/services/backendClient.server.ts";
+import { BackendClient, BackendError } from "./backendClient.server.ts";
 
 const secret = "test-s2s-secret";
 const shop = "acme-store.myshopify.com";

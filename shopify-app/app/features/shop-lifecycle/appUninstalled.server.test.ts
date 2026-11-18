@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { handleAppUninstalled } from "../app/services/appUninstalled.server.ts";
-import { BackendError } from "../app/services/backendClient.server.ts";
+import { handleAppUninstalled } from "./appUninstalled.server.ts";
+import { BackendError } from "../../lib/backend/backendClient.server.ts";
 
 const webhook = {
   shop: "acme-store.myshopify.com",

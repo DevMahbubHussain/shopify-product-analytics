@@ -90,14 +90,14 @@ Two statements per request regardless of batch size. `GuardedUpsert` never touch
 
 | Step | File | Role |
 |---|---|---|
-| C-14 | `shopify-app/tests/uninstallShop.server.test.ts` | trigger time sent, normalized to UTC, fallback to now, failure propagates |
-| C-15 | `shopify-app/app/services/uninstallShop.server.ts` | signed call to `shop-uninstall` |
-| C-16a | `shopify-app/tests/verifyWebhook.server.test.ts` | valid, wrong secret, tampered body, malformed signature, missing headers, foreign domain, missing secret |
-| C-16b | `shopify-app/app/services/verifyWebhook.server.ts` | base64 HMAC-SHA256 of the raw body, `timingSafeEqual`, `*.myshopify.com` |
-| C-16d | `shopify-app/tests/backendClient.server.test.ts` | failed response throws `BackendError` with `status` |
-| C-16e | `shopify-app/app/services/backendClient.server.ts` | `BackendError` (message unchanged) |
-| C-16f | `shopify-app/tests/appUninstalled.server.test.ts` | the four rows of the table in §3, including call order |
-| C-16g | `shopify-app/app/services/appUninstalled.server.ts` | Laravel first, then sessions |
+| C-14 | `shopify-app/app/features/shop-lifecycle/uninstallShop.server.test.ts` | trigger time sent, normalized to UTC, fallback to now, failure propagates |
+| C-15 | `shopify-app/app/features/shop-lifecycle/uninstallShop.server.ts` | signed call to `shop-uninstall` |
+| C-16a | `shopify-app/app/lib/shopify/verifyWebhook.server.test.ts` | valid, wrong secret, tampered body, malformed signature, missing headers, foreign domain, missing secret |
+| C-16b | `shopify-app/app/lib/shopify/verifyWebhook.server.ts` | base64 HMAC-SHA256 of the raw body, `timingSafeEqual`, `*.myshopify.com` |
+| C-16d | `shopify-app/app/lib/backend/backendClient.server.test.ts` | failed response throws `BackendError` with `status` |
+| C-16e | `shopify-app/app/lib/backend/backendClient.server.ts` | `BackendError` (message unchanged) |
+| C-16f | `shopify-app/app/features/shop-lifecycle/appUninstalled.server.test.ts` | the four rows of the table in §3, including call order |
+| C-16g | `shopify-app/app/features/shop-lifecycle/appUninstalled.server.ts` | Laravel first, then sessions |
 | C-16 / C-16c / C-16h | `shopify-app/app/routes/webhooks.app.uninstalled.tsx` | verify → `handleAppUninstalled` → status |
 
 ---

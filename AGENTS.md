@@ -180,7 +180,7 @@ shopify app dev --config local   # Dev server + tunnel; loads shopify-app/.env v
 npm run build                    # Production build (react-router build)
 npm run typecheck                # react-router typegen + tsc strict
 npm run lint                     # ESLint
-npm test                         # node --test "tests/**/*.test.ts" (built-in runner, no extra deps)
+npm test                         # node --test "app/**/*.test.ts" (built-in runner, no extra deps)
 npm run setup                    # prisma generate + migrate deploy (shopify_sessions)
 # Playwright E2E (npx playwright test) is added with the Step 6 UI; not installed yet.
 
@@ -234,7 +234,21 @@ Nonce:     Cache::store('redis')->add('s2s:nonce:{uuid}', 1, tolerance * 2), cla
 Errors:    401 {"error": "..."}
 ```
 
-Any change to this contract updates `VerifyS2SSignature.php`, `shopify-app/app/services/backendClient.server.ts`, and both test suites together.
+Any change to this contract updates `VerifyS2SSignature.php`, `shopify-app/app/lib/backend/backendClient.server.ts`, and both test suites together.
+
+### 2.5 Shopify App Code Layout (Binding)
+
+```
+shopify-app/app/
+├── routes/      React Router file routes; thin: authenticate or verify, call a feature, return a response
+├── lib/         Shared infrastructure with no business rules (backend/ S2S client, shopify/ webhook + GraphQL helpers)
+└── features/    One folder per business capability (shop-lifecycle/, later catalog-sync/, order-sync/ …)
+```
+
+- `features/*` may import `lib/*`; `lib/*` never imports `features/*`; a feature never imports another feature's internals.
+- Tests sit next to their file as `*.test.ts` and run with `npm test`; `.dockerignore` keeps them out of images.
+- Server-only modules are named `*.server.ts`. No barrel `index.ts` files; import the real file.
+- Template entry points (`shopify.server.ts`, `db.server.ts`, `entry.server.tsx`, `root.tsx`) stay at `app/`.
 
 ---
 
