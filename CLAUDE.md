@@ -147,7 +147,7 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ## 7. Current Repository State (verified 2026-11-18)
 
-Step 1 (Foundation & S2S) complete. Nothing from Step 2+ exists yet.
+Step 1 (Foundation & S2S) complete except the React Router app skeleton (`shopify-app` is a minimal tsx server). Nothing from Step 2+ exists yet.
 
 | Area | Actual state |
 |---|---|
@@ -161,28 +161,8 @@ Step 1 (Foundation & S2S) complete. Nothing from Step 2+ exists yet.
 | Migrations | Only Laravel defaults (users, cache, jobs) |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
 
-**Canonical S2S contract (both sides):**
-```
-Headers:   X-App-Shop-Domain, X-App-Timestamp, X-App-Nonce (UUID), X-App-Signature, X-Correlation-ID
-Canonical: METHOD\nPATH\nTIMESTAMP\nNONCE\nSHOP_DOMAIN\nsha256_hex(BODY)
-Signature: hex(HMAC_SHA256(S2S_SHARED_SECRET, canonical)), compared with hash_equals
-Tolerance: abs(now - ts) <= config('services.s2s.tolerance', 300)
-Nonce:     Cache::store('redis')->add('s2s:nonce:{uuid}', 1, tolerance * 2), claimed only after signature verifies
-Errors:    401 {"error": "..."} for missing headers, malformed nonce, stale timestamp, bad signature, reused nonce
-```
-
-### Environment and secrets
-- `backend/.env` is the single config source for every Laravel process (HTTP, worker, CLI). Compose injects no Laravel env into `backend` / `laravel-worker`. Reason: `php artisan serve` strips container env from its HTTP workers (`ServeCommand::$passthroughVariables`), so compose env would only reach the worker and split config.
-- Root `.env` is compose interpolation only: `DB_*` for `postgres`, `S2S_SHARED_SECRET` for `shopify-app`. `${VAR:?}` fails fast. Keep `S2S_SHARED_SECRET` and `DB_*` equal in both files.
-- Redis prefixes explicit: `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`. Cache data in Redis db1, cache locks on `default` connection db0.
-- No secret values in tracked files. Templates: `.env.example`, `backend/.env.example`.
-- `shopify-app/shopify.app.toml` is the committed template with a placeholder `client_id`. The real `client_id` lives in gitignored `shopify-app/shopify.app.local.toml`; run Shopify CLI with `--config local`. Keep shared fields identical in both.
-- Docker on this machine runs via Colima: `DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`.
-
-### Test environment
-- Pest Feature tests use `RefreshDatabase` on PostgreSQL `shopify_analytics_test` (created by `infrastructure/docker/postgres/initdb/01-create-test-database.sql` on fresh volumes; run it manually with `psql -f` on existing volumes).
-- Tests use Redis db2 (default) / db3 (cache) with `spa-test-*` prefixes. `phpunit.xml` overrides use `force="true"`.
-- `tests/Feature/Infrastructure/TestEnvironmentIsolationTest.php` fails if tests ever point at SQLite, the dev DB, or dev Redis.
+### Environment, config, tests, S2S
+Binding rules live in `AGENTS.md` §2.1–2.4 (imported above): env files and secrets, Shopify app config files, test isolation, S2S contract. Not repeated here.
 
 ### Known open issues
 - Worker command uses `--tries=3`; jobs must still declare `$tries = 5` per C9.3 (job property wins).
