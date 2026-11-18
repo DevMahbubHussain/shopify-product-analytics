@@ -15,7 +15,8 @@ An enterprise-ready, containerized, multi-tenant Shopify application architectur
 | Shopify app config (`shopify.app.toml` template + gitignored `shopify.app.local.toml`, API `2026-10`, managed install) | Done |
 | Multi-tenant domain schema (10 tables) | Done |
 | Ingestion API (6 signed endpoints) | Done |
-| React Router OAuth, session storage, Polaris UI, webhooks | Planned (gateway is currently a minimal Node server) |
+| Embedded Shopify app: official React Router template baseline (auth, sessions, App Bridge, webhook verification) | In progress (Step 3: baseline committed, customization underway) |
+| Shopify data sync (GraphQL harvester, normalizers, analytics webhooks), Polaris dashboard | Planned |
 | Metric aggregation, analytics REST API, billing, exports | Planned |
 
 Boxes in the topology below marked *(planned)* describe the target architecture.
@@ -32,7 +33,7 @@ Each feature lists what it provides, where it lives, and how it talks to the res
 
 | Part | Location |
 |---|---|
-| Request signer | `shopify-app/app/services/backendClient.ts` |
+| Request signer | Being ported into the Shopify app template (Step 3); prototype in git history at `21783c0:shopify-app/app/services/backendClient.ts` |
 | Signature, timestamp, and nonce check | `backend/app/Http/Middleware/VerifyS2SSignature.php` |
 | Correlation IDs for tracing | `backend/app/Http/Middleware/AssignCorrelationId.php` |
 
@@ -88,16 +89,53 @@ Guarantees: safe retries (no duplicates), stale out-of-order updates ignored, te
 
 Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.md](STARTER.md).
 
+### 5. Embedded Shopify App (Template Baseline)
+
+**Provides:** the merchant-facing Shopify app, built from Shopify's official React Router template (Shopify CLI 5.0.2, `@shopify/shopify-app-react-router` 4.0.3, React Router 7.18.2). It gives us Shopify's own, maintained implementation of:
+- **Install and authentication:** Shopify-managed install; `authenticate.admin()` validates each merchant request and handles token exchange.
+- **Session storage:** each store's access token is stored server-side (Prisma `Session` table) and never leaves `shopify-app` (C2).
+- **Embedded UI shell:** App Bridge layout inside Shopify Admin (`app/routes/app.tsx`), with routes created from file names.
+- **Verified webhooks:** `authenticate.webhook()` checks Shopify's `X-Shopify-Hmac-Sha256` signature before any handler code runs.
+- **GraphQL Admin API client:** `admin.graphql()` with the store's token.
+
+| Part | Location | Role |
+|---|---|---|
+| Shopify setup | `shopify-app/app/shopify.server.ts` | API key/secret, scopes, API version, session storage, App Store distribution |
+| Sessions | `shopify-app/prisma/schema.prisma`, `app/db.server.ts` | `Session` table holding store tokens |
+| Install/login callbacks | `shopify-app/app/routes/auth.$.tsx` | Shopify `/auth/*` flow |
+| Admin layout | `shopify-app/app/routes/app.tsx` | Authenticates the merchant, starts App Bridge, nav |
+| Webhooks | `shopify-app/app/routes/webhooks.*.tsx` | Verified `app/uninstalled`, `app/scopes_update` handlers |
+| App config | `shopify-app/shopify.app.toml` (placeholder `client_id`) + gitignored `shopify.app.local.toml` (real `client_id`) | Scopes `read_products,read_orders`, webhooks API `2026-10`, managed install |
+| Dev runner | `shopify-app/shopify.web.toml` | How `shopify app dev` starts the server |
+
+**How it communicates:**
+- **Merchant browser ⇄ shopify-app:** HTTPS inside the Shopify Admin iframe (App Bridge session token).
+- **shopify-app ⇄ Shopify:** GraphQL Admin API with the stored token; webhooks inbound, verified by HMAC.
+- **shopify-app → backend:** S2S-signed JSON (Feature 1). The signer is being ported into the template next.
+
+**Customization in progress (Step 3, one file per step):**
+
+| # | Change | Why |
+|---|---|---|
+| 1 | API version `July26` → `October26` | Match the pinned `2026-10` |
+| 2 | Sessions: SQLite → PostgreSQL database `shopify_sessions` | Durable, Docker/production-ready, separate from Laravel's data |
+| 3 | Remove template demo code (product generator page, demo metafield/metaobject/event, demo product webhook) | Demo needs `write_products`, which this app does not request |
+| 4 | Port the S2S signer and its test | Talk to Laravel |
+| 5 | After install → `ingestion/shop`; on uninstall → mark shop inactive in Laravel | Keep Laravel's tenant list in sync |
+| 6 | Docker/compose for Node 22 | Template requires Node ≥ 22.12 |
+
+**Starter template:** once these customizations are done, and before any analytics-specific code, the repository will be tagged **`v0.4.0-starter`**, so new Shopify projects start with a working, installable embedded app connected to Laravel. Existing starter tags are kept.
+
 ---
 
 ## How the Parts Communicate
 
 ```
  Merchant browser (Shopify Admin)
-        │  App Bridge iframe                                    (planned: Step 3/6)
+        │  App Bridge iframe                    (template baseline; dashboard: Step 6)
         ▼
  ┌──────────────────────────┐   GraphQL Admin API (OAuth token)   ┌─────────────────┐
- │ shopify-app (Node 20)    │ ──────────────────────────────────► │ Shopify         │
+ │ shopify-app (Node 22)    │ ──────────────────────────────────► │ Shopify         │
  │ gateway / integration    │ ◄────────────────────────────────── │ platform        │
  │                          │   Webhooks (X-Shopify-Hmac-Sha256)  └─────────────────┘
  └────────────┬─────────────┘
@@ -119,9 +157,9 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 
 | From → To | Channel | Security | Status |
 |---|---|---|---|
-| Shopify → shopify-app | HTTPS webhooks | `X-Shopify-Hmac-Sha256` | Planned (Step 3) |
-| shopify-app → Shopify | GraphQL Admin API `2026-10` | OAuth access token (never leaves shopify-app) | Planned (Step 3) |
-| shopify-app → backend | JSON over internal network | HMAC-SHA256 + ±300 s timestamp + single-use nonce + per-shop rate limit | Done |
+| Shopify → shopify-app | HTTPS webhooks | `X-Shopify-Hmac-Sha256`, verified by `authenticate.webhook()` | Template baseline (app lifecycle topics); analytics topics in Step 3 |
+| shopify-app → Shopify | GraphQL Admin API `2026-10` | Store access token from session storage (never leaves shopify-app) | Client available (template); sync queries in Step 3 |
+| shopify-app → backend | JSON over internal network | HMAC-SHA256 + ±300 s timestamp + single-use nonce + per-shop rate limit | Laravel side done; signer being ported into the template |
 | backend → PostgreSQL | SQL | Tenant-scoped queries, composite foreign keys | Done |
 | backend → Redis | Cache, rate limiter, queues | Internal network only | Done (queues used from Step 4) |
 | Redis → laravel-worker | Queued jobs from ingestion events | — | Planned (Step 4) |
@@ -143,9 +181,9 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 │  Shopify App Gateway (Node.js 20 / TypeScript)                                         │
 │  Container: spa_shopify_app | Port: 3000                                               │
 │                                                                                        │
-│  - Session Storage & OAuth 2.0 Token Exchange (planned)                                │
-│  - Polaris UI & App Bridge Actions (planned)                                           │
-│  - Webhook Ingestion & HMAC Verification (planned)                                     │
+│  - Session Storage & Managed Install / Token Exchange (template)                       │
+│  - App Bridge Embedded Layout (template); Polaris dashboard (planned)                  │
+│  - Webhook HMAC Verification (template); analytics webhooks (planned)                  │
 │  - Cryptographic S2S Client (HMAC-SHA256 Signing + Correlation IDs)                    │
 └─────────────────────────────────────────────┬──────────────────────────────────────────┘
                                               │ Internal Network (S2S Signed Traffic)
@@ -193,7 +231,7 @@ The stack is containerized with Docker Compose and tuned for macOS virtualizatio
 | **`redis`** | `spa_redis` | `redis:7-alpine` | `6379` | Queue broker, cache, rate limits | `redis-cli ping` |
 | **`backend`** | `spa_backend` | `php:8.3-cli` (custom) | `8000` | Laravel REST API application | HTTP `/api/v1/health` |
 | **`laravel-worker`** | `spa_worker` | `php:8.3-cli` (custom) | — | Continuous queue worker (`php artisan queue:work redis`) | Process status |
-| **`shopify-app`** | `spa_shopify_app` | `node:20-alpine` (custom) | `3000` | Shopify Gateway & App Bridge server | HTTP `/health` |
+| **`shopify-app`** | `spa_shopify_app` | `node:20-alpine` (custom) | `3000` | Shopify app server. **Not runnable in Docker until the Step 3 Docker update** (template needs Node ≥ 22.12); run it with the Shopify CLI on the host for now | — |
 
 ---
 
@@ -275,8 +313,14 @@ Images do not bundle dependencies (source is bind-mounted):
 ```bash
 docker compose build
 docker compose run --rm --no-deps backend composer install
-docker compose run --rm --no-deps shopify-app npm install
-docker compose up -d
+docker compose up -d postgres redis backend laravel-worker
+```
+
+The Shopify app runs on the host with the Shopify CLI during development (Node ≥ 22.12, `npm install -g @shopify/cli@latest`):
+```bash
+cd shopify-app
+npm install
+shopify app dev --config local      # tunnel + hot reload; uses the real client_id from shopify.app.local.toml
 ```
 
 Verify service status:
@@ -317,14 +361,15 @@ docker compose logs -f shopify-app
 # Redis DBs 2/3 with spa-test-* prefixes; never touches development data.
 docker compose exec backend ./vendor/bin/pest
 
-# Run TypeScript test runner
-docker compose exec shopify-app npm test
-
-# Run TypeScript type check
-docker compose exec shopify-app npm run lint
+# Shopify app (host, inside shopify-app/)
+npm run typecheck     # React Router type generation + tsc --noEmit
+npm run lint          # ESLint
+# The S2S signer test returns with the signer port (Step 3).
 ```
 
 ### Live S2S Cryptographic Verification
+> Temporarily unavailable: the prototype `/s2s-handshake` route was removed with the template baseline and returns with the S2S signer port (Step 3). The backend side is still covered by `VerifyS2SSignatureTest`.
+
 Test the live gateway-to-backend cryptographic handshake:
 ```bash
 curl -s "http://localhost:3000/s2s-handshake?shop=merchant-store.myshopify.com"
@@ -366,6 +411,8 @@ docker compose exec redis redis-cli ping
 ## 6. Using as a Starter Template for Any Shopify App
 
 The full step-by-step guide lives in [STARTER.md](STARTER.md): fresh-history clone of `v0.3.1-starter`, identifiers to rename, Dev Dashboard app creation, env files, boot and verification, and the recommended build order.
+
+`v0.3.1-starter` contains the backend stack and a minimal signing gateway. The next starter, **`v0.4.0-starter`**, will add the customized Shopify React Router app (Feature 5) once its Step 3 customization is complete.
 
 ```bash
 git clone --branch v0.3.1-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
