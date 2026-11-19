@@ -20,6 +20,17 @@ function expectedSignature(
     .digest("hex");
 }
 
+function expectedGetSignature(
+  path: string,
+  timestamp: string,
+  nonce: string,
+): string {
+  const emptyHash = createHash("sha256").update("").digest("hex");
+  return createHmac("sha256", secret)
+    .update(`GET\n${path}\n${timestamp}\n${nonce}\n${shop}\n${emptyHash}`)
+    .digest("hex");
+}
+
 function stubFetch(response: Response): {
   calls: () => { url: string; init: RequestInit }[];
 } {
@@ -124,6 +135,51 @@ test("postInternal throws with the status code on a failed response", async () =
       assert.ok(error instanceof BackendError);
       assert.equal(error.status, 404);
       assert.match(error.message, /\(404\)/);
+      return true;
+    },
+  );
+});
+
+test("getInternal sends a signed GET request with empty body hash and contract headers", async () => {
+  const fetchStub = stubFetch(Response.json({ sync_run: null }));
+  const client = new BackendClient({ baseUrl: "http://backend:8000/", secret });
+
+  const result = await client.getInternal<{ sync_run: null }>(
+    "/internal/v1/ingestion/sync-status",
+    shop,
+    "corr-456",
+  );
+
+  assert.deepEqual(result, { sync_run: null });
+  const [call] = fetchStub.calls();
+  assert.ok(call);
+  assert.equal(call.url, "http://backend:8000/internal/v1/ingestion/sync-status");
+  assert.equal(call.init.method, "GET");
+  assert.equal(call.init.body, undefined);
+
+  const headers = new Headers(call.init.headers);
+  const timestamp = headers.get("X-App-Timestamp") ?? "";
+  const nonce = headers.get("X-App-Nonce") ?? "";
+  assert.equal(headers.get("X-App-Shop-Domain"), shop);
+  assert.equal(headers.get("X-Correlation-ID"), "corr-456");
+  assert.match(nonce, uuidPattern);
+  assert.ok(Math.abs(Number(timestamp) - Date.now() / 1000) <= 5);
+  assert.equal(
+    headers.get("X-App-Signature"),
+    expectedGetSignature("/internal/v1/ingestion/sync-status", timestamp, nonce),
+  );
+});
+
+test("getInternal throws with the status code on a failed response", async () => {
+  stubFetch(Response.json({ error: "Unauthorized" }, { status: 401 }));
+  const client = new BackendClient({ baseUrl: "http://backend:8000", secret });
+
+  await assert.rejects(
+    client.getInternal("/internal/v1/ingestion/sync-status", shop),
+    (error: unknown) => {
+      assert.ok(error instanceof BackendError);
+      assert.equal(error.status, 401);
+      assert.match(error.message, /\(401\)/);
       return true;
     },
   );

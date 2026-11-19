@@ -108,6 +108,25 @@ it('rejects a batch with more than 250 line items in total', function (): void {
     expect(DB::table('orders')->count())->toBe(0);
 });
 
+it('accumulates line items when one large order arrives in slices with the same header', function (): void {
+    $slice = fn (int $from, int $to): array => orderPayload(1, [
+        'line_items' => array_map(fn (int $l): array => lineItemPayload(1, $l), range($from, $to)),
+    ]);
+
+    foreach ([$slice(1, 250), $slice(251, 500), $slice(501, 600)] as $payload) {
+        s2sPost('/internal/v1/ingestion/orders', ['orders' => [$payload]])
+            ->assertOk()
+            ->assertExactJson(['received' => 1, 'written' => 1, 'skipped_stale' => 0]);
+    }
+    s2sPost('/internal/v1/ingestion/orders', ['orders' => [$slice(1, 250)]])->assertOk();
+
+    $orderId = DB::table('orders')->value('id');
+
+    expect(DB::table('orders')->count())->toBe(1)
+        ->and(DB::table('order_line_items')->where('order_id', $orderId)->count())->toBe(600)
+        ->and(DB::table('order_line_items')->distinct()->count('shopify_line_item_gid'))->toBe(600);
+});
+
 it('ingests a 25-order, 250-line batch with a bounded query count', function (): void {
     $orders = array_map(
         fn (int $o): array => orderPayload($o, ['line_items' => array_map(fn (int $l): array => lineItemPayload($o, $l, ($l % 2) + 1), range(1, 10))]),

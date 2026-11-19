@@ -10,23 +10,7 @@ export const LINE_ITEMS_PER_ORDER = 50;
 export const REFUNDS_PER_ORDER = 5;
 export const REFUND_LINES_PER_REFUND = 20;
 
-/** Admin API 2026-10. `$query` takes Shopify search syntax, e.g. "updated_at:>'2026-11-01T00:00:00Z'". */
-export const ORDERS_QUERY = `#graphql
-  query OrderSync($first: Int!, $after: String, $query: String) {
-    orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
-      nodes {
-        id
-        name
-        test
-        displayFinancialStatus
-        displayFulfillmentStatus
-        currencyCode
-        processedAt
-        cancelledAt
-        updatedAt
-        lineItems(first: ${LINE_ITEMS_PER_ORDER}) {
-          nodes {
-            id
+export const LINE_ITEM_FIELDS = `id
             title
             sku
             quantity
@@ -49,19 +33,9 @@ export const ORDERS_QUERY = `#graphql
                   currencyCode
                 }
               }
-            }
-          }
-          pageInfo {
-            hasNextPage
-          }
-        }
-        refunds(first: ${REFUNDS_PER_ORDER}) {
-          id
-          createdAt
-          updatedAt
-          refundLineItems(first: ${REFUND_LINES_PER_REFUND}) {
-            nodes {
-              id
+            }`;
+
+export const REFUND_LINE_FIELDS = `id
               quantity
               lineItem {
                 id
@@ -71,12 +45,44 @@ export const ORDERS_QUERY = `#graphql
                   amount
                   currencyCode
                 }
-              }
+              }`;
+
+export const REFUND_FIELDS = `id
+          createdAt
+          updatedAt
+          refundLineItems(first: ${REFUND_LINES_PER_REFUND}) {
+            nodes {
+              ${REFUND_LINE_FIELDS}
             }
             pageInfo {
               hasNextPage
             }
+          }`;
+
+/** Admin API 2026-10. `$query` takes Shopify search syntax, e.g. "updated_at:>'2026-11-01T00:00:00Z'". */
+export const ORDERS_QUERY = `#graphql
+  query OrderSync($first: Int!, $after: String, $query: String) {
+    orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
+      nodes {
+        id
+        name
+        test
+        displayFinancialStatus
+        displayFulfillmentStatus
+        currencyCode
+        processedAt
+        cancelledAt
+        updatedAt
+        lineItems(first: ${LINE_ITEMS_PER_ORDER}) {
+          nodes {
+            ${LINE_ITEM_FIELDS}
           }
+          pageInfo {
+            hasNextPage
+          }
+        }
+        refunds(first: ${REFUNDS_PER_ORDER}) {
+          ${REFUND_FIELDS}
         }
       }
       pageInfo {

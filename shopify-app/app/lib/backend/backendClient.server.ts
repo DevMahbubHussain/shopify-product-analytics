@@ -98,6 +98,41 @@ export class BackendClient {
 
     return (await response.json()) as TResponse;
   }
+
+  public async getInternal<TResponse = unknown>(
+    path: string,
+    shopDomain: string,
+    correlationId: string = randomUUID(),
+  ): Promise<TResponse> {
+    const normalizedPath = normalizePath(path);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const nonce = randomUUID();
+
+    const response = await fetch(`${this.baseUrl}${normalizedPath}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "X-App-Shop-Domain": shopDomain,
+        "X-App-Timestamp": timestamp.toString(),
+        "X-App-Nonce": nonce,
+        "X-App-Signature": this.generateSignature(
+          "GET",
+          normalizedPath,
+          timestamp,
+          nonce,
+          shopDomain,
+          "",
+        ),
+        "X-Correlation-ID": correlationId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new BackendError(response.status, await response.text());
+    }
+
+    return (await response.json()) as TResponse;
+  }
 }
 
 let sharedClient: BackendClient | undefined;

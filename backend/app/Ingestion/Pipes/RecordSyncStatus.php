@@ -7,6 +7,7 @@ namespace App\Ingestion\Pipes;
 use App\Data\Ingestion\SyncStatusData;
 use App\Enums\SyncRunStatus;
 use App\Ingestion\Exceptions\IllegalSyncTransition;
+use App\Ingestion\Exceptions\SyncRunAlreadyInProgress;
 use App\Ingestion\Exceptions\UnknownSyncRun;
 use App\Ingestion\IngestionContext;
 use App\Ingestion\IngestionResponse;
@@ -32,16 +33,40 @@ final class RecordSyncStatus
 
     private function start(string $shopId, SyncStatusData $data): SyncStatusResult
     {
-        $run = SyncRun::query()->create([
-            'shop_id' => $shopId,
-            'sync_type' => $data->syncType,
-            'status' => $data->status,
-            'records_received' => $data->recordsReceived ?? 0,
-            'records_processed' => $data->recordsProcessed ?? 0,
-            ...$this->statusFields(null, $data),
-        ]);
+        return DB::transaction(function () use ($shopId, $data): SyncStatusResult {
+            SyncRun::query()
+                ->where('shop_id', $shopId)
+                ->whereIn('status', [SyncRunStatus::Running, SyncRunStatus::Pending])
+                ->where('updated_at', '<', now()->subMinutes(10))
+                ->update([
+                    'status' => SyncRunStatus::Failed->value,
+                    'completed_at' => now(),
+                    'error_code' => 'STALLED',
+                    'error_summary' => 'Sync run abandoned after 10 minutes of inactivity.',
+                ]);
 
-        return new SyncStatusResult($run->id, $run->status, created: true);
+            $alreadyRunning = SyncRun::query()
+                ->where('shop_id', $shopId)
+                ->whereIn('status', [SyncRunStatus::Running, SyncRunStatus::Pending])
+                ->lockForUpdate()
+                ->exists();
+
+            if ($alreadyRunning) {
+                throw new SyncRunAlreadyInProgress();
+            }
+
+            $run = SyncRun::query()->create([
+                'shop_id' => $shopId,
+                'sync_type' => $data->syncType,
+                'status' => $data->status,
+                'records_received' => $data->recordsReceived ?? 0,
+                'records_processed' => $data->recordsProcessed ?? 0,
+                'cursor_metadata' => $data->cursorMetadata,
+                ...$this->statusFields(null, $data),
+            ]);
+
+            return new SyncStatusResult($run->id, $run->status, created: true);
+        }, 5);
     }
 
     private function advance(string $shopId, SyncStatusData $data): SyncStatusResult

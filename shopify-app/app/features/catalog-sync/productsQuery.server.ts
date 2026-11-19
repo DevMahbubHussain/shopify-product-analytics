@@ -1,6 +1,13 @@
 import type { Connection } from "../../lib/shopify/graphql/paginate.server.ts";
 import type { ProductStatus } from "../../lib/backend/ingestionContract.server.ts";
 
+export const VARIANTS_PER_PRODUCT = 100;
+
+export const VARIANT_FIELDS = `id
+            title
+            sku
+            price`;
+
 /** Admin API 2026-10. `$query` takes Shopify search syntax, e.g. "updated_at:>'2026-11-01T00:00:00Z'". */
 export const PRODUCTS_QUERY = `#graphql
   query CatalogProducts($first: Int!, $after: String, $query: String) {
@@ -21,12 +28,9 @@ export const PRODUCTS_QUERY = `#graphql
             }
           }
         }
-        variants(first: 100) {
+        variants(first: ${VARIANTS_PER_PRODUCT}) {
           nodes {
-            id
-            title
-            sku
-            price
+            ${VARIANT_FIELDS}
           }
           pageInfo {
             hasNextPage

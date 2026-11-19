@@ -153,12 +153,17 @@ test("refuses a refund whose lines were truncated", () => {
   );
 });
 
-test("refuses an order that may have more refunds than were fetched", () => {
-  const refunds = Array.from({ length: REFUNDS_PER_ORDER }, (_, i) =>
+test("normalizes an order with a full page of refunds once the harvester completed them", () => {
+  const refunds = Array.from({ length: REFUNDS_PER_ORDER + 1 }, (_, i) =>
     refund({ id: `gid://shopify/Refund/${i + 1}` }),
   );
 
-  assert.throws(() => normalizeRefunds(order(refunds)), RefundsTruncatedError);
+  const result = normalizeRefunds(order(refunds));
+
+  assert.equal(
+    new Set(result.lines.map((line) => line.refund_gid)).size,
+    REFUNDS_PER_ORDER + 1,
+  );
 });
 
 test("refuses a refund subtotal in another currency", () => {

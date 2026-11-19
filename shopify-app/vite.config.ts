@@ -37,7 +37,14 @@ if (host === "localhost") {
 
 export default defineConfig({
   server: {
-    allowedHosts: [host],
+    allowedHosts: [
+      host,
+      "localhost",
+      ".trycloudflare.com",
+      ".ngrok.io",
+      ".ngrok-free.app",
+      ".spin.dev",
+    ],
     cors: {
       preflightContinue: true,
     },

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Internal\IngestionController;
+use App\Http\Controllers\Internal\SyncStatusController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -55,6 +56,10 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(function () {
             'shop_domain' => $request->attributes->get('shop_domain'),
             'timestamp' => time(),
         ]);
+    });
+
+    Route::prefix('sync')->controller(SyncStatusController::class)->group(function (): void {
+        Route::get('status', 'show');
     });
 
     Route::prefix('ingestion')

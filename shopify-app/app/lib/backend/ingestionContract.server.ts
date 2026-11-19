@@ -10,6 +10,7 @@ export const INGESTION_LIMITS = {
   lineItemsPerOrderBatch: 250,
   refundLinesPerBatch: 250,
   productGidsPerDelete: 250,
+  errorSummaryLength: 2000,
 } as const;
 
 export type ProductStatus = "ACTIVE" | "ARCHIVED" | "DRAFT" | "UNLISTED";

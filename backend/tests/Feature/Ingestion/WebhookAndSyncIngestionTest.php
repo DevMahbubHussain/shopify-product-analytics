@@ -120,6 +120,39 @@ describe('sync status', function (): void {
 
         expect(DB::table('sync_runs')->value('status'))->toBe('running');
     });
+
+    it('rejects starting a second sync run while one is already in progress', function (): void {
+        s2sPost('/internal/v1/ingestion/sync-status', [
+            'sync_type' => 'initial',
+            'status' => 'running',
+        ])->assertCreated();
+
+        s2sPost('/internal/v1/ingestion/sync-status', [
+            'sync_type' => 'initial',
+            'status' => 'running',
+        ])->assertConflict()
+          ->assertExactJson(['error' => 'A sync run is already in progress for this shop.']);
+    });
+
+    it('allows starting a new sync run if previous running run is stalled past 10 minutes', function (): void {
+        $oldRunId = s2sPost('/internal/v1/ingestion/sync-status', [
+            'sync_type' => 'initial',
+            'status' => 'running',
+        ])->json('sync_run_id');
+
+        DB::table('sync_runs')->where('id', $oldRunId)->update([
+            'updated_at' => now()->subMinutes(11),
+        ]);
+
+        s2sPost('/internal/v1/ingestion/sync-status', [
+            'sync_type' => 'initial',
+            'status' => 'running',
+        ])->assertCreated();
+
+        $oldRun = DB::table('sync_runs')->where('id', $oldRunId)->first();
+        expect($oldRun->status)->toBe('failed')
+            ->and($oldRun->error_code)->toBe('STALLED');
+    });
 });
 
 it('rate limits ingestion per shop', function (): void {

@@ -1,9 +1,8 @@
 import type { RefundLinePayload } from "../../lib/backend/ingestionContract.server.ts";
 import { shopAmount } from "./normalizeOrder.server.ts";
-import {
-  REFUNDS_PER_ORDER,
-  type ShopifyOrderNode,
-  type ShopifyRefundNode,
+import type {
+  ShopifyOrderNode,
+  ShopifyRefundNode,
 } from "./ordersQuery.server.ts";
 
 export interface NormalizedRefunds {
@@ -16,19 +15,16 @@ export class RefundsTruncatedError extends Error {
 
   public constructor(orderGid: string) {
     super(
-      `Order ${orderGid} may have more refunds or refund lines than one query returned.`,
+      `Order ${orderGid} has more refund lines than one query returned.`,
     );
     this.name = "RefundsTruncatedError";
     this.orderGid = orderGid;
   }
 }
 
-/** Order.refunds has no pageInfo, so a full page may hide more refunds. */
+/** Refund lists are completed by completeOrderDetails; a truncated refund line page here is a harvester bug. */
 function assertComplete(order: ShopifyOrderNode): void {
-  const truncated =
-    order.refunds.length >= REFUNDS_PER_ORDER ||
-    order.refunds.some((refund) => refund.refundLineItems.pageInfo.hasNextPage);
-  if (truncated) {
+  if (order.refunds.some((refund) => refund.refundLineItems.pageInfo.hasNextPage)) {
     throw new RefundsTruncatedError(order.id);
   }
 }
