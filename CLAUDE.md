@@ -155,23 +155,26 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ---
 
-## 7. Current Repository State (verified 2026-11-18)
+## 7. Current Repository State (verified 2026-11-19)
 
-Steps 1–2 complete and merged to `main`. Step 3 (Shopify integration) in progress on `shopify-integration`: group B (template baseline, install → Laravel) and group C (uninstall sync, product soft-delete) done. Aggregation listeners for `OrdersIngested` / `RefundsIngested` arrive in Step 4.
+Steps 1, 2, and 3 are complete and merged to `main`. Steps 4 (Analytics Engine & Queues) and 5 (Laravel Analytics REST API) are complete on branch `analytics-engine`.
 
 | Area | Actual state |
 |---|---|
 | Laravel | `laravel/framework ^13.17`, PHP 8.3 CLI image running `php artisan serve`, Pest ^4.7 |
-| Routes | `routes/api.php`: `GET /api/v1/health`, `POST /internal/v1/ping`, `POST /internal/v1/ingestion/*` (all `/internal` routes use `s2s` middleware). `apiPrefix: ''` in `bootstrap/app.php` |
+| Routes | `routes/api.php`: `GET /api/v1/health`, `GET /api/v1/analytics/overview`, `GET /api/v1/analytics/sales-trend`, `GET /api/v1/products`, `GET /api/v1/products/{id}/analytics`, `GET /api/v1/products/{id}/variants/analytics`, `POST /internal/v1/ping`, `POST /internal/v1/ingestion/*`, `GET /internal/v1/sync/status` (all `/internal` and `/api/v1` routes use `s2s` middleware). `apiPrefix: ''` in `bootstrap/app.php` |
 | S2S middleware | `backend/app/Http/Middleware/VerifyS2SSignature.php`, aliased `s2s`, sets `shop_domain` request attribute |
 | Correlation | `backend/app/Http/Middleware/AssignCorrelationId.php`, prepended globally; `Context::add('correlation_id')` flows into logs and queued jobs |
-| S2S client | `shopify-app/app/lib/backend/backendClient.server.ts` (`backendClient().postInternal`), lazy singleton, throws without env |
+| S2S client | `shopify-app/app/lib/backend/backendClient.server.ts` (`backendClient().postInternal`, `getInternal`), lazy singleton, throws without env |
 | Shop registration | `shopify-app/app/features/shop-lifecycle/registerShop.server.ts`, called from `hooks.afterAuth` in `app/shopify.server.ts`: Shopify `shop { id currencyCode ianaTimezone }` → `POST /internal/v1/ingestion/shop`; failures propagate (install retried) |
 | Shop lifecycle | Laravel: `MarkShopUninstalled` (row lock, keeps first `uninstalled_at`, ignores deliveries triggered before `installed_at`), `SoftDeleteProducts`. Gateway: `routes/webhooks.app.uninstalled.tsx` → `lib/shopify/verifyWebhook.server.ts` (HMAC only) → `features/shop-lifecycle/appUninstalled.server.ts` (Laravel first, sessions deleted only on `uninstalled` or 404) → `uninstallShop.server.ts`. `BackendError` carries the HTTP status. Spec: `docs/shop-lifecycle.md` |
-| Tests | Backend: 159 Pest tests under `backend/tests/Feature/{Security,Database,Ingestion,Infrastructure}`. Gateway: 24 tests next to their files under `shopify-app/app/` (`*.test.ts`) via `npm test` (`node --test`) |
-| shopify-app | Official React Router template (`@shopify/shopify-app-react-router` 4.x), Admin API `2026-10`, Polaris web components, Prisma sessions in Postgres `shopify_sessions`. Runs on host via `shopify app dev --config local`; optional container under compose profile `app`. Demo code removed; placeholder home page only |
-| Migrations | 10 domain tables; spec in `docs/migrations.md` |
-| Ingestion | `POST /internal/v1/ingestion/{shop,shop-uninstall,products,products-delete,orders,refunds,webhook-events,sync-status}` via `IngestionController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
+| Sync & Ingestion | Product & order/refund crawler with cursor pagination, rate throttling, 60-day window, chunked delivery, stalled run recovery, and auto-polling UI in `shopify-app/app/routes/app._index.tsx`. Specs: `docs/shopify-harvester.md`, `docs/sync-orchestration.md` |
+| Queue & Aggregation | Queue connection `redis` via `laravel-worker`. Events `OrdersIngested` and `RefundsIngested` dispatched during ingestion; queued aggregation jobs `AggregateProductDailyMetricsJob` with `ShouldBeUnique`, `WithoutOverlapping`, retries ($tries = 5, backoff [5, 15, 60]), and failed job tracking. Spec: `docs/analytics-engine.md` |
+| Analytics REST API | `/api/v1/analytics/overview` (summary cards + comparisons), `/api/v1/analytics/sales-trend` (time-series with zero gap-filling), `/api/v1/products` (paginated performance ranking), `/api/v1/products/{id}/analytics`, `/api/v1/products/{id}/variants/analytics`. Sub-50ms reads on precomputed `product_daily_metrics`. |
+| Tests | Backend: 215 Pest tests (1009 assertions) under `backend/tests/Feature/{Security,Database,Ingestion,Infrastructure,Sync,Analytics}` and `backend/tests/Unit/Analytics`. Gateway: 121 tests next to their files under `shopify-app/app/` (`*.test.ts`) via `npm test` (`node --test`). All green. |
+| shopify-app | Official React Router template (`@shopify/shopify-app-react-router` 4.x), Admin API `2026-10`, Polaris web components, Prisma sessions in Postgres `shopify_sessions`. Runs on host via `shopify app dev --config local`; optional container under compose profile `app`. |
+| Migrations | 10 domain tables + Laravel cache/jobs/failed_jobs tables; spec in `docs/migrations.md` |
+| Ingestion | `POST /internal/v1/ingestion/{shop,shop-uninstall,products,products-delete,orders,refunds,webhook-events,sync-status}` and `GET /internal/v1/sync/status` via `IngestionController` / `SyncStatusController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
 | Ingestion internals | FormRequest → readonly DTO (`app/Data/Ingestion`) → pipes; `GuardedUpsert` (ON CONFLICT with `shopify_updated_at` freshness guard), `TenantIdLookup`; VOs `ShopifyGid`, `DecimalAmount`; enums in `app/Enums` |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
 
