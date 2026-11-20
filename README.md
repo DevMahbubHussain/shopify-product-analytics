@@ -351,19 +351,3 @@ After installing the app in a store (`shopify app dev --config local`), verify t
 ```bash
 docker compose exec postgres psql -U postgres -d shopify_analytics -c "select shop_domain, status, currency_code, timezone from shops"
 ```
-
----
-
-## Documentation Index
-
-| Guide | Description |
-|---|---|
-| [docs/e2e-testing.md](docs/e2e-testing.md) | Playwright automated browser test suite architecture and execution |
-| [docs/production-deployment.md](docs/production-deployment.md) | Multi-stage Docker packaging, Nginx CSP configuration, and load balancing |
-| [docs/app-store-compliance.md](docs/app-store-compliance.md) | Protected Customer Data (PCD) audit and mandatory compliance webhooks |
-| [docs/privacy-policy.md](docs/privacy-policy.md) | Public merchant and customer privacy policy |
-| [docs/polaris-ui.md](docs/polaris-ui.md) | Polaris web components, layout, date pickers, and dashboard design |
-| [docs/billing-exports.md](docs/billing-exports.md) | Shopify App Subscriptions and asynchronous CSV export pipelines |
-| [docs/analytics-engine.md](docs/analytics-engine.md) | Metric aggregation formulas, rollups, and PostgreSQL index optimization |
-| [docs/migrations.md](docs/migrations.md) | Multi-tenant database schema specification and relationship topology |
-| [docs/shop-lifecycle.md](docs/shop-lifecycle.md) | Managed installation token exchange and uninstall webhook cleanup |
