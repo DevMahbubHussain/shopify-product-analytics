@@ -756,7 +756,7 @@ export default function Index() {
             }}
           >
             <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "#202223" }}>
-              Analytics Metric Definitions (PRD 8.1)
+              Analytics Metric Definitions
             </div>
             <div
               style={{
