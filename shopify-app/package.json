@@ -18,7 +18,8 @@
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "test": "node --test \"app/**/*.test.ts\""
+    "test": "node --test \"app/**/*.test.ts\"",
+    "test:e2e": "playwright test"
   },
   "type": "module",
   "engines": {
@@ -44,6 +45,7 @@
   "devDependencies": {
     "@shopify/api-codegen-preset": "^1.2.0",
     "@shopify/polaris-types": "^2.0.0",
+    "@playwright/test": "^1.49.1",
     "@types/eslint": "^9.6.1",
     "@types/node": "^22.18.8",
     "@types/react": "^18.3.25",
