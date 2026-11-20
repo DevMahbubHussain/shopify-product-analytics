@@ -64,7 +64,7 @@ services:
     working_dir: /var/www/backend
     volumes:
       - ./backend:/var/www/backend
-    command: php artisan queue:work redis --sleep=3 --tries=3 --timeout=90
+    command: php artisan queue:work redis --queue=default,exports --sleep=3 --tries=3 --timeout=90
     depends_on:
       postgres:
         condition: service_healthy

@@ -13,22 +13,24 @@ beforeEach(function (): void {
     $this->shopId = installShop();
 });
 
-function s2sGet(string $path, string $shopDomain = 'acme.myshopify.com'): TestResponse
-{
-    config()->set('services.s2s.secret', INGESTION_TEST_SECRET);
+if (! function_exists('s2sGet')) {
+    function s2sGet(string $path, string $shopDomain = 'acme.myshopify.com'): TestResponse
+    {
+        config()->set('services.s2s.secret', INGESTION_TEST_SECRET);
 
-    $timestamp = (string) time();
-    $nonce = (string) Str::uuid();
-    $canonical = implode("\n", ['GET', $path, $timestamp, $nonce, $shopDomain, hash('sha256', '')]);
+        $timestamp = (string) time();
+        $nonce = (string) Str::uuid();
+        $canonical = implode("\n", ['GET', $path, $timestamp, $nonce, $shopDomain, hash('sha256', '')]);
 
-    return test()->call('GET', $path, [], [], [], [
-        'CONTENT_TYPE' => 'application/json',
-        'HTTP_ACCEPT' => 'application/json',
-        'HTTP_X_APP_SHOP_DOMAIN' => $shopDomain,
-        'HTTP_X_APP_TIMESTAMP' => $timestamp,
-        'HTTP_X_APP_NONCE' => $nonce,
-        'HTTP_X_APP_SIGNATURE' => hash_hmac('sha256', $canonical, INGESTION_TEST_SECRET),
-    ]);
+        return test()->call('GET', $path, [], [], [], [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_APP_SHOP_DOMAIN' => $shopDomain,
+            'HTTP_X_APP_TIMESTAMP' => $timestamp,
+            'HTTP_X_APP_NONCE' => $nonce,
+            'HTTP_X_APP_SIGNATURE' => hash_hmac('sha256', $canonical, INGESTION_TEST_SECRET),
+        ]);
+    }
 }
 
 describe('GET /internal/v1/sync/status', function (): void {

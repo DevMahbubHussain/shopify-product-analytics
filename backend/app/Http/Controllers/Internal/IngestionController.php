@@ -9,15 +9,18 @@ use App\Http\Requests\Internal\IngestOrdersRequest;
 use App\Http\Requests\Internal\IngestProductsRequest;
 use App\Http\Requests\Internal\IngestRefundsRequest;
 use App\Http\Requests\Internal\IngestShopRequest;
+use App\Http\Requests\Internal\IngestSubscriptionRequest;
 use App\Http\Requests\Internal\IngestionRequest;
 use App\Http\Requests\Internal\RecordWebhookDeliveryRequest;
 use App\Http\Requests\Internal\ReportSyncStatusRequest;
+use App\Http\Requests\Internal\ShopRedactRequest;
 use App\Http\Requests\Internal\UninstallShopRequest;
 use App\Ingestion\IngestionContext;
 use App\Ingestion\IngestionResponse;
 use App\Ingestion\Pipes\DeduplicateWebhookDelivery;
 use App\Ingestion\Pipes\DispatchIngestedEvents;
 use App\Ingestion\Pipes\MarkShopUninstalled;
+use App\Ingestion\Pipes\PurgeShopTenant;
 use App\Ingestion\Pipes\RecordSyncStatus;
 use App\Ingestion\Pipes\ResolveShopTenant;
 use App\Ingestion\Pipes\SoftDeleteProducts;
@@ -25,6 +28,7 @@ use App\Ingestion\Pipes\UpsertOrderBatch;
 use App\Ingestion\Pipes\UpsertProductBatch;
 use App\Ingestion\Pipes\UpsertRefundBatch;
 use App\Ingestion\Pipes\UpsertShop;
+use App\Ingestion\Pipes\UpsertSubscription;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Pipeline\Pipeline;
 
@@ -38,6 +42,16 @@ final class IngestionController
     public function shopUninstall(UninstallShopRequest $request): JsonResponse
     {
         return $this->run($request, $request->toDto(), [MarkShopUninstalled::class]);
+    }
+
+    public function shopRedact(ShopRedactRequest $request): JsonResponse
+    {
+        return $this->run($request, $request->toDto(), [PurgeShopTenant::class]);
+    }
+
+    public function subscription(IngestSubscriptionRequest $request): JsonResponse
+    {
+        return $this->run($request, $request->toDto(), [ResolveShopTenant::class, UpsertSubscription::class]);
     }
 
     public function products(IngestProductsRequest $request): JsonResponse

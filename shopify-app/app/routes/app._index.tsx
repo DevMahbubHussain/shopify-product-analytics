@@ -1,11 +1,10 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
 import {
-  Form,
   Link,
   useFetcher,
   useLoaderData,
@@ -84,10 +83,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const backend = backendClient();
   const shopDomain = session.shop;
 
+  const formData = await request.formData();
+  const intent = formData.get("intent")?.toString() || "retry";
+
   try {
     const syncStatus = await getSyncStatus({ backend, shopDomain });
 
-    if (!RETRYABLE_STATES.has(syncStatus.state)) {
+    if (intent === "sync") {
+      if (syncStatus.state === "syncing") {
+        return { retried: false, state: syncStatus.state };
+      }
+    } else if (!RETRYABLE_STATES.has(syncStatus.state)) {
       return { retried: false, state: syncStatus.state };
     }
 
@@ -111,8 +117,27 @@ function RetryButton() {
 
   return (
     <fetcher.Form method="post">
-      <s-button type="submit" variant="primary" loading={submitting}>
+      <input type="hidden" name="intent" value="retry" />
+      <s-button type="submit" variant="primary" loading={submitting ? true : undefined}>
         Retry sync
+      </s-button>
+    </fetcher.Form>
+  );
+}
+
+function SyncStoreButton({ isSyncing }: { isSyncing: boolean }) {
+  const fetcher = useFetcher<typeof action>();
+  const submitting = fetcher.state !== "idle" || isSyncing;
+
+  return (
+    <fetcher.Form method="post" style={{ display: "inline-block" }}>
+      <input type="hidden" name="intent" value="sync" />
+      <s-button
+        type="submit"
+        variant="secondary"
+        loading={submitting ? true : undefined}
+      >
+        {submitting ? "Syncing..." : "Sync Store"}
       </s-button>
     </fetcher.Form>
   );
@@ -136,24 +161,163 @@ function formatMoney(amount: string, currency: string = "USD"): string {
 function ComparisonBadge({ comparison }: { comparison?: MetricComparison }) {
   if (!comparison) return null;
 
-  const { delta, percentage_change, direction } = comparison;
-  if (percentage_change === null && direction === "flat") {
+  const { percentage_change, direction } = comparison;
+  const dir = String(direction);
+  const isUp = dir === "increase" || dir === "up";
+  const isDown = dir === "decrease" || dir === "down";
+  const isFlat = dir === "unchanged" || dir === "flat";
+
+  if (percentage_change === null && isFlat) {
     return <s-badge tone="info">0.0%</s-badge>;
   }
 
-  const sign = direction === "up" ? "+" : "";
+  const sign = isUp ? "+" : "";
   const pctText =
     percentage_change !== null
       ? `${sign}${percentage_change.toFixed(1)}%`
-      : `${sign}${delta}`;
+      : isUp
+        ? "+100%"
+        : isDown
+          ? "-100%"
+          : "0.0%";
 
-  if (direction === "up") {
+  if (isUp) {
     return <s-badge tone="success">▲ {pctText}</s-badge>;
   }
-  if (direction === "down") {
+  if (isDown) {
     return <s-badge tone="critical">▼ {pctText}</s-badge>;
   }
   return <s-badge tone="info">{pctText}</s-badge>;
+}
+
+function ExportButton({ from, to }: { from: string; to: string }) {
+  const [exportState, setExportState] = useState<
+    "idle" | "requesting" | "polling" | "ready" | "error"
+  >("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  async function handleExport() {
+    setExportState("requesting");
+    setErrorMessage(null);
+
+    const formData = new FormData();
+    formData.append("from", from);
+    formData.append("to", to);
+
+    try {
+      const res = await fetch("/app/export", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await res.json()) as {
+        exportId?: string;
+        message?: string;
+      };
+
+      if (!res.ok) {
+        if (res.status === 403) {
+          setErrorMessage(
+            data.message || "CSV exports require an active Pro subscription.",
+          );
+        } else {
+          setErrorMessage(data.message || "Export failed. Please try again.");
+        }
+        setExportState("error");
+        return;
+      }
+
+      const exportId = data.exportId;
+      setExportState("polling");
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const pollRes = await fetch(`/app/export?id=${exportId}`);
+          const pollData = (await pollRes.json()) as { status: string };
+
+          if (pollData.status === "COMPLETED") {
+            clearInterval(pollInterval);
+            setExportState("ready");
+            try {
+              const downloadRes = await fetch(
+                `/app/export?id=${exportId}&download=true`,
+              );
+              if (!downloadRes.ok) {
+                setErrorMessage("Failed to download CSV file.");
+                setExportState("error");
+                return;
+              }
+              const blob = await downloadRes.blob();
+              const downloadUrl = window.URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = downloadUrl;
+              a.download = `products_${from}_${to}.csv`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              window.URL.revokeObjectURL(downloadUrl);
+              setTimeout(() => setExportState("idle"), 2000);
+            } catch {
+              setErrorMessage("Failed to download CSV.");
+              setExportState("error");
+            }
+          } else if (pollData.status === "FAILED") {
+            clearInterval(pollInterval);
+            setErrorMessage("Export processing failed on worker.");
+            setExportState("error");
+          }
+        } catch {
+          clearInterval(pollInterval);
+          setErrorMessage("Failed to check export status.");
+          setExportState("error");
+        }
+      }, 1500);
+    } catch {
+      setErrorMessage("Network error initiating export.");
+      setExportState("error");
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <s-button
+        variant="secondary"
+        onClick={handleExport}
+        loading={
+          exportState === "requesting" || exportState === "polling"
+            ? true
+            : undefined
+        }
+      >
+        {exportState === "polling"
+          ? "Generating CSV..."
+          : exportState === "ready"
+            ? "Downloading..."
+            : "Export CSV"}
+      </s-button>
+      {errorMessage && (
+        <span
+          style={{
+            fontSize: "12px",
+            color: "#b00020",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+          }}
+        >
+          {errorMessage}
+          {errorMessage.includes("Pro") && (
+            <Link
+              to="/app/pricing"
+              style={{ color: "#008060", fontWeight: 600 }}
+            >
+              Upgrade
+            </Link>
+          )}
+        </span>
+      )}
+    </div>
+  );
 }
 
 export default function Index() {
@@ -190,25 +354,150 @@ export default function Index() {
   const currency = overview?.currency || "USD";
   const currentPreset = dateRange.preset;
 
-  function buildUrl(updates: Record<string, string | number | undefined>): string {
-    const next = new URLSearchParams(searchParams);
-    for (const [key, value] of Object.entries(updates)) {
-      if (value === undefined || value === "") {
-        next.delete(key);
-      } else {
-        next.set(key, String(value));
+  const buildUrl = useCallback(
+    (updates: Record<string, string | number | undefined>): string => {
+      const next = new URLSearchParams(searchParams);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === undefined || value === "") {
+          next.delete(key);
+        } else {
+          next.set(key, String(value));
+        }
       }
-    }
-    return `?${next.toString()}`;
-  }
+      return `?${next.toString()}`;
+    },
+    [searchParams],
+  );
 
-  function handleNavigate(updates: Record<string, string | number | undefined>) {
-    navigate(buildUrl(updates), { preventScrollReset: true });
-  }
+  const handleNavigate = useCallback(
+    (
+      updates: Record<string, string | number | undefined>,
+      options?: { replace?: boolean },
+    ) => {
+      navigate(buildUrl(updates), {
+        preventScrollReset: true,
+        replace: options?.replace ?? false,
+      });
+    },
+    [buildUrl, navigate],
+  );
+
+  useEffect(() => {
+    const page = document.querySelector("s-page");
+    if (page) {
+      page.setAttribute("inlinesize", "large");
+    }
+  }, []);
+
+  const [showCustomPicker, setShowCustomPicker] = useState(
+    currentPreset === "custom",
+  );
+  const [showProductDatePicker, setShowProductDatePicker] = useState(false);
+  const [customFrom, setCustomFrom] = useState(dateRange.from);
+  const [customTo, setCustomTo] = useState(dateRange.to);
+  const [dateError, setDateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCustomFrom(dateRange.from);
+    setCustomTo(dateRange.to);
+    if (currentPreset !== "custom") {
+      setShowCustomPicker(false);
+    }
+  }, [dateRange, currentPreset]);
+
+  const handleApplyCustomDate = useCallback(() => {
+    if (!customFrom || !customTo) {
+      setDateError("Please select both start and end dates.");
+      return;
+    }
+    if (customFrom > customTo) {
+      setDateError("Start date cannot be after end date.");
+      return;
+    }
+    setDateError(null);
+    handleNavigate({
+      preset: "custom",
+      from: customFrom,
+      to: customTo,
+      page: 1,
+    });
+  }, [customFrom, customTo, handleNavigate]);
+
+  const [searchValue, setSearchValue] = useState(
+    searchParams.get("search") ?? "",
+  );
+
+  useEffect(() => {
+    setSearchValue(searchParams.get("search") ?? "");
+  }, [searchParams]);
+
+  const handleSearchSubmit = useCallback(() => {
+    const trimmed = searchValue.trim();
+    const currentQuery = searchParams.get("search") ?? "";
+    if (trimmed !== currentQuery) {
+      handleNavigate(
+        { search: trimmed || undefined, page: 1 },
+        { replace: true },
+      );
+    }
+  }, [searchValue, searchParams, handleNavigate]);
+
+  const handleSearchClear = useCallback(() => {
+    setSearchValue("");
+    if (searchParams.has("search")) {
+      handleNavigate({ search: undefined, page: 1 }, { replace: true });
+    }
+  }, [searchParams, handleNavigate]);
 
   return (
-    <s-page heading="Product Analytics">
+    <s-page heading="Product Analytics" inlineSize="large">
+      <s-button slot="secondary-actions" variant="tertiary" href="/app/pricing">
+        Plans &amp; Billing
+      </s-button>
       <ShimmerStyle />
+      <style>{`
+        s-page {
+          display: block !important;
+          width: 100% !important;
+          max-width: 100% !important;
+        }
+        .spa-kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+        }
+        @media (min-width: 1300px) {
+          .spa-kpi-grid {
+            grid-template-columns: repeat(6, 1fr);
+          }
+        }
+        @media (max-width: 800px) {
+          .spa-kpi-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        @media (max-width: 500px) {
+          .spa-kpi-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+
+      {/* Plan Entitlement Notification */}
+      {analyticsError &&
+        (analyticsError.includes("plan") ||
+          analyticsError.includes("30 days")) && (
+          <s-banner heading="Historical Reporting Limit" tone="info">
+            <s-paragraph>
+              The Free plan includes up to 30 days of analytics history. Upgrade
+              to Pro to unlock 365 days of reporting and unlimited CSV data
+              exports.
+            </s-paragraph>
+            <s-link slot="primary-action" href="/app/pricing">
+              Upgrade to Pro
+            </s-link>
+          </s-banner>
+        )}
 
       {/* Sync Status Notifications */}
       {syncStatus.state === "syncing" && (
@@ -259,39 +548,168 @@ export default function Index() {
       <s-section>
         <div
           style={{
+            background: "#ffffff",
+            border: "1px solid #e1e3e5",
+            borderRadius: "8px",
+            padding: "12px 16px",
             display: "flex",
-            flexWrap: "wrap",
             justifyContent: "space-between",
             alignItems: "center",
             gap: "12px",
-            marginBottom: "8px",
+            flexWrap: "nowrap",
           }}
         >
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-            {DATE_PRESETS.filter((p) => p.key !== "custom").map((preset) => {
-              const isActive = currentPreset === preset.key;
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "6px",
+              alignItems: "center",
+              flex: "1 1 auto",
+              minWidth: 0,
+            }}
+          >
+            {DATE_PRESETS.map((preset) => {
+              const isActive =
+                preset.key === "custom"
+                  ? currentPreset === "custom" || showCustomPicker
+                  : currentPreset === preset.key;
+
               return (
                 <s-button
                   key={preset.key}
                   variant={isActive ? "primary" : "secondary"}
-                  onClick={() =>
-                    handleNavigate({
-                      preset: preset.key,
-                      from: undefined,
-                      to: undefined,
-                      page: 1,
-                    })
-                  }
+                  onClick={() => {
+                    if (preset.key === "custom") {
+                      setShowCustomPicker((prev) => !prev);
+                    } else {
+                      setShowCustomPicker(false);
+                      handleNavigate({
+                        preset: preset.key,
+                        from: undefined,
+                        to: undefined,
+                        page: 1,
+                      });
+                    }
+                  }}
                 >
                   {preset.label}
                 </s-button>
               );
             })}
           </div>
-          <div style={{ fontSize: "13px", color: "#616161" }}>
-            <strong>{dateRange.from}</strong> to <strong>{dateRange.to}</strong>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <s-badge tone="info">
+              {dateRange.from} to {dateRange.to}
+            </s-badge>
+            <SyncStoreButton isSyncing={syncStatus.state === "syncing"} />
           </div>
         </div>
+
+        {/* Polaris Custom Date Range Selector Panel */}
+        {showCustomPicker && (
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e1e3e5",
+              borderRadius: "8px",
+              padding: "16px",
+              marginTop: "8px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "16px",
+                alignItems: "flex-end",
+              }}
+            >
+              <div style={{ minWidth: "180px" }}>
+                <s-date-field
+                  label="Start date"
+                  value={customFrom}
+                  defaultValue={customFrom}
+                  onChange={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomFrom(val);
+                      setDateError(null);
+                    }
+                  }}
+                  onInput={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomFrom(val);
+                      setDateError(null);
+                    }
+                  }}
+                />
+              </div>
+              <div style={{ minWidth: "160px" }}>
+                <s-date-field
+                  label="End date"
+                  value={customTo}
+                  defaultValue={customTo}
+                  onChange={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomTo(val);
+                      setDateError(null);
+                    }
+                  }}
+                  onInput={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomTo(val);
+                      setDateError(null);
+                    }
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <s-button variant="primary" onClick={handleApplyCustomDate}>
+                  Apply Range
+                </s-button>
+                <s-button
+                  variant="secondary"
+                  onClick={() => {
+                    setShowCustomPicker(false);
+                    setCustomFrom(dateRange.from);
+                    setCustomTo(dateRange.to);
+                    setDateError(null);
+                  }}
+                >
+                  Cancel
+                </s-button>
+              </div>
+            </div>
+
+            {dateError && (
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "#b00020",
+                  marginTop: "8px",
+                }}
+              >
+                {dateError}
+              </div>
+            )}
+          </div>
+        )}
       </s-section>
 
       {/* Overview KPI Cards */}
@@ -299,13 +717,7 @@ export default function Index() {
         {isLoading ? (
           <KpiCardsSkeleton />
         ) : overview ? (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: "16px",
-            }}
-          >
+          <div className="spa-kpi-grid">
             {/* Net Sales */}
             <div
               style={{
@@ -588,37 +1000,252 @@ export default function Index() {
                 flexWrap: "wrap",
                 gap: "12px",
                 alignItems: "center",
+                justifyContent: "space-between",
               }}
             >
-              <Form
-                method="get"
-                style={{ display: "flex", gap: "8px", flex: 1, minWidth: "220px" }}
+              <div
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  flex: "1 1 320px",
+                  maxWidth: "480px",
+                  alignItems: "center",
+                }}
               >
-                <input type="hidden" name="preset" value={dateRange.preset} />
-                <input
-                  type="text"
-                  name="search"
-                  defaultValue={searchParams.get("search") ?? ""}
-                  placeholder="Search products by title..."
+                <div
                   style={{
+                    position: "relative",
                     flex: 1,
-                    padding: "6px 10px",
-                    borderRadius: "4px",
-                    border: "1px solid #c9cccf",
-                    fontSize: "13px",
+                    display: "flex",
+                    alignItems: "center",
                   }}
-                />
-                <s-button type="submit">Search</s-button>
-                {searchParams.has("search") && (
-                  <s-button
-                    variant="secondary"
-                    onClick={() => handleNavigate({ search: undefined, page: 1 })}
-                  >
+                >
+                  <input
+                    type="text"
+                    value={searchValue}
+                    onChange={(e) => setSearchValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleSearchSubmit();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        handleSearchClear();
+                      }
+                    }}
+                    placeholder="Search products by title..."
+                    style={{
+                      width: "100%",
+                      padding: "6px 28px 6px 10px",
+                      borderRadius: "4px",
+                      border: "1px solid #c9cccf",
+                      fontSize: "13px",
+                    }}
+                  />
+                  {searchValue.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleSearchClear}
+                      title="Clear search"
+                      style={{
+                        position: "absolute",
+                        right: "8px",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: "13px",
+                        color: "#8c9196",
+                        padding: "2px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <s-button onClick={handleSearchSubmit}>Search</s-button>
+
+                {(searchParams.has("search") || searchValue.length > 0) && (
+                  <s-button variant="secondary" onClick={handleSearchClear}>
                     Clear
                   </s-button>
                 )}
-              </Form>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <s-badge tone="info">
+                  {dateRange.from} to {dateRange.to}
+                </s-badge>
+                <s-button
+                  variant="secondary"
+                  onClick={() => setShowProductDatePicker((prev) => !prev)}
+                >
+                  {showProductDatePicker ? "Close Date" : "Change Date"}
+                </s-button>
+                <ExportButton from={dateRange.from} to={dateRange.to} />
+              </div>
             </div>
+
+            {/* Inline Polaris Quick Date Picker for Products */}
+            {showProductDatePicker && (
+              <div
+                style={{
+                  padding: "16px",
+                  borderBottom: "1px solid #e1e3e5",
+                  background: "#f9fafb",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "6px",
+                    marginBottom: "12px",
+                  }}
+                >
+                  {DATE_PRESETS.map((preset) => {
+                    const isActive =
+                      preset.key === "custom"
+                        ? currentPreset === "custom"
+                        : currentPreset === preset.key;
+
+                    return (
+                      <s-button
+                        key={preset.key}
+                        variant={isActive ? "primary" : "secondary"}
+                        onClick={() => {
+                          if (preset.key !== "custom") {
+                            setShowProductDatePicker(false);
+                            handleNavigate({
+                              preset: preset.key,
+                              from: undefined,
+                              to: undefined,
+                              page: 1,
+                            });
+                          }
+                        }}
+                      >
+                        {preset.label}
+                      </s-button>
+                    );
+                  })}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "16px",
+                    alignItems: "flex-end",
+                  }}
+                >
+                  <div style={{ minWidth: "160px" }}>
+                    <s-date-field
+                      label="Start date"
+                      value={customFrom}
+                      defaultValue={customFrom}
+                      onChange={(e: Event) => {
+                        const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                        const val = target?.value;
+                        if (val) {
+                          setCustomFrom(val);
+                          setDateError(null);
+                        }
+                      }}
+                      onInput={(e: Event) => {
+                        const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                        const val = target?.value;
+                        if (val) {
+                          setCustomFrom(val);
+                          setDateError(null);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div style={{ minWidth: "160px" }}>
+                    <s-date-field
+                      label="End date"
+                      value={customTo}
+                      defaultValue={customTo}
+                      onChange={(e: Event) => {
+                        const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                        const val = target?.value;
+                        if (val) {
+                          setCustomTo(val);
+                          setDateError(null);
+                        }
+                      }}
+                      onInput={(e: Event) => {
+                        const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                        const val = target?.value;
+                        if (val) {
+                          setCustomTo(val);
+                          setDateError(null);
+                        }
+                      }}
+                    />
+                  </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <s-button
+                      variant="primary"
+                      onClick={() => {
+                        if (!customFrom || !customTo) {
+                          setDateError("Please select both start and end dates.");
+                          return;
+                        }
+                        if (customFrom > customTo) {
+                          setDateError("Start date cannot be after end date.");
+                          return;
+                        }
+                        setDateError(null);
+                        setShowProductDatePicker(false);
+                        handleNavigate({
+                          preset: "custom",
+                          from: customFrom,
+                          to: customTo,
+                          page: 1,
+                        });
+                      }}
+                    >
+                      Apply Range
+                    </s-button>
+                    <s-button
+                      variant="secondary"
+                      onClick={() => {
+                        setShowProductDatePicker(false);
+                        setCustomFrom(dateRange.from);
+                        setCustomTo(dateRange.to);
+                        setDateError(null);
+                      }}
+                    >
+                      Cancel
+                    </s-button>
+                  </div>
+                </div>
+
+                {dateError && (
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      color: "#b00020",
+                      marginTop: "8px",
+                    }}
+                  >
+                    {dateError}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Table Data */}
             {products && products.data.length > 0 ? (

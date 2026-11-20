@@ -183,6 +183,16 @@ it('aggregates sales trend by month interval', function () {
         ],
     ]);
 
+    DB::table('subscriptions')->insert([
+        'id' => (string) Str::uuid7(),
+        'shop_id' => $this->shopId,
+        'shopify_subscription_gid' => 'gid://shopify/AppSubscription/1',
+        'plan_key' => 'pro',
+        'status' => 'ACTIVE',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
     $response = s2sTrendGet('/api/v1/analytics/sales-trend', [
         'from' => '2026-01-01',
         'to' => '2026-03-31',
