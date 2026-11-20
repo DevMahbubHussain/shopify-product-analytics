@@ -158,6 +158,22 @@ function formatMoney(amount: string, currency: string = "USD"): string {
   }
 }
 
+function formatSyncTime(isoString: string | null | undefined): string | null {
+  if (!isoString) return null;
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return null;
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  } catch {
+    return null;
+  }
+}
+
 function ComparisonBadge({ comparison }: { comparison?: MetricComparison }) {
   if (!comparison) return null;
 
@@ -393,6 +409,7 @@ export default function Index() {
     currentPreset === "custom",
   );
   const [showProductDatePicker, setShowProductDatePicker] = useState(false);
+  const [showMetricDefinitions, setShowMetricDefinitions] = useState(false);
   const [customFrom, setCustomFrom] = useState(dateRange.from);
   const [customTo, setCustomTo] = useState(dateRange.to);
   const [dateError, setDateError] = useState<string | null>(null);
@@ -607,6 +624,11 @@ export default function Index() {
               whiteSpace: "nowrap",
             }}
           >
+            {syncStatus.syncRun?.completedAt && (
+              <span style={{ fontSize: "12px", color: "#616161" }}>
+                Last synced: {formatSyncTime(syncStatus.syncRun.completedAt)}
+              </span>
+            )}
             <s-badge tone="info">
               {dateRange.from} to {dateRange.to}
             </s-badge>
@@ -714,12 +736,69 @@ export default function Index() {
 
       {/* Overview KPI Cards */}
       <s-section heading="Overview Performance">
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "12px" }}>
+          <s-button
+            variant="tertiary"
+            onClick={() => setShowMetricDefinitions((prev) => !prev)}
+          >
+            {showMetricDefinitions ? "Hide Metric Definitions" : "ℹ Metric Definitions"}
+          </s-button>
+        </div>
+
+        {showMetricDefinitions && (
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e1e3e5",
+              borderRadius: "8px",
+              padding: "16px",
+              marginBottom: "16px",
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "#202223" }}>
+              Analytics Metric Definitions (PRD 8.1)
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                gap: "12px",
+                fontSize: "13px",
+                color: "#616161",
+              }}
+            >
+              <div>
+                <strong style={{ color: "#202223" }}>Net Sales:</strong> Gross sales minus discounts minus refunds.
+              </div>
+              <div>
+                <strong style={{ color: "#202223" }}>Gross Sales:</strong> Sum of line-item sales before discounts and returns.
+              </div>
+              <div>
+                <strong style={{ color: "#202223" }}>Discounts:</strong> Promotional discounts allocated across included line items.
+              </div>
+              <div>
+                <strong style={{ color: "#202223" }}>Refunds:</strong> Returned merchandise value attributable to included products.
+              </div>
+              <div>
+                <strong style={{ color: "#202223" }}>Units Sold:</strong> Included line-item quantity minus refunded quantities.
+              </div>
+              <div>
+                <strong style={{ color: "#202223" }}>Orders:</strong> Distinct eligible orders containing at least one included product.
+              </div>
+              <div>
+                <strong style={{ color: "#202223" }}>Average Order Revenue:</strong> Net sales divided by distinct orders.
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <KpiCardsSkeleton />
         ) : overview ? (
           <div className="spa-kpi-grid">
             {/* Net Sales */}
             <div
+              title="Gross sales minus discounts minus refunds"
               style={{
                 background: "#ffffff",
                 border: "1px solid #e1e3e5",
@@ -748,6 +827,7 @@ export default function Index() {
 
             {/* Gross Sales */}
             <div
+              title="Sum of line-item sales before discounts and returns"
               style={{
                 background: "#ffffff",
                 border: "1px solid #e1e3e5",
@@ -776,6 +856,7 @@ export default function Index() {
 
             {/* Discounts */}
             <div
+              title="Discounts allocated to included line items"
               style={{
                 background: "#ffffff",
                 border: "1px solid #e1e3e5",
@@ -794,6 +875,7 @@ export default function Index() {
 
             {/* Refunds */}
             <div
+              title="Returned merchandise value attributable to products"
               style={{
                 background: "#ffffff",
                 border: "1px solid #e1e3e5",
@@ -819,6 +901,7 @@ export default function Index() {
 
             {/* Units Sold */}
             <div
+              title="Included line-item quantity minus refunded quantities"
               style={{
                 background: "#ffffff",
                 border: "1px solid #e1e3e5",
@@ -847,6 +930,7 @@ export default function Index() {
 
             {/* Orders & Average Revenue */}
             <div
+              title="Distinct eligible orders containing included products"
               style={{
                 background: "#ffffff",
                 border: "1px solid #e1e3e5",
@@ -1006,73 +1090,112 @@ export default function Index() {
               <div
                 style={{
                   display: "flex",
-                  gap: "8px",
-                  flex: "1 1 320px",
-                  maxWidth: "480px",
+                  gap: "12px",
+                  flex: "1 1 auto",
                   alignItems: "center",
+                  flexWrap: "wrap",
                 }}
               >
                 <div
                   style={{
-                    position: "relative",
-                    flex: 1,
                     display: "flex",
+                    gap: "8px",
+                    flex: "1 1 240px",
+                    maxWidth: "360px",
                     alignItems: "center",
                   }}
                 >
-                  <input
-                    type="text"
-                    value={searchValue}
-                    onChange={(e) => setSearchValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleSearchSubmit();
-                      } else if (e.key === "Escape") {
-                        e.preventDefault();
-                        handleSearchClear();
-                      }
-                    }}
-                    placeholder="Search products by title..."
+                  <div
                     style={{
-                      width: "100%",
-                      padding: "6px 28px 6px 10px",
-                      borderRadius: "4px",
-                      border: "1px solid #c9cccf",
-                      fontSize: "13px",
+                      position: "relative",
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
                     }}
-                  />
-                  {searchValue.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleSearchClear}
-                      title="Clear search"
-                      style={{
-                        position: "absolute",
-                        right: "8px",
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        fontSize: "13px",
-                        color: "#8c9196",
-                        padding: "2px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
+                  >
+                    <input
+                      type="text"
+                      value={searchValue}
+                      onChange={(e) => setSearchValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleSearchSubmit();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          handleSearchClear();
+                        }
                       }}
-                    >
-                      ✕
-                    </button>
+                      placeholder="Search products by title..."
+                      style={{
+                        width: "100%",
+                        padding: "6px 28px 6px 10px",
+                        borderRadius: "4px",
+                        border: "1px solid #c9cccf",
+                        fontSize: "13px",
+                      }}
+                    />
+                    {searchValue.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleSearchClear}
+                        title="Clear search"
+                        style={{
+                          position: "absolute",
+                          right: "8px",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "13px",
+                          color: "#8c9196",
+                          padding: "2px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <s-button onClick={handleSearchSubmit}>Search</s-button>
+
+                  {(searchParams.has("search") || searchValue.length > 0) && (
+                    <s-button variant="secondary" onClick={handleSearchClear}>
+                      Clear
+                    </s-button>
                   )}
                 </div>
 
-                <s-button onClick={handleSearchSubmit}>Search</s-button>
-
-                {(searchParams.has("search") || searchValue.length > 0) && (
-                  <s-button variant="secondary" onClick={handleSearchClear}>
-                    Clear
-                  </s-button>
-                )}
+                {/* Status Filter Pills */}
+                <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                  {(
+                    [
+                      { key: "all", label: "All" },
+                      { key: "active", label: "Active" },
+                      { key: "draft", label: "Draft" },
+                      { key: "archived", label: "Archived" },
+                    ] as const
+                  ).map((st) => {
+                    const currentStatus = searchParams.get("status") ?? "all";
+                    const isSelected = currentStatus.toLowerCase() === st.key;
+                    return (
+                      <s-button
+                        key={st.key}
+                        variant={isSelected ? "primary" : "secondary"}
+                        onClick={() => {
+                          handleNavigate({
+                            status: st.key === "all" ? undefined : st.key,
+                            page: 1,
+                          });
+                        }}
+                      >
+                        {st.label}
+                      </s-button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div
@@ -1296,6 +1419,8 @@ export default function Index() {
                         : ""}
                     </s-button>
                   </s-table-header>
+                  <s-table-header>Discounts</s-table-header>
+                  <s-table-header>Refunds</s-table-header>
                   <s-table-header>
                     <s-button
                       variant="tertiary"
@@ -1387,9 +1512,29 @@ export default function Index() {
                             >
                               {prod.title}
                             </Link>
-                            <div style={{ fontSize: "12px", color: "#616161" }}>
-                              {prod.vendor || "No vendor"}{" "}
-                              {prod.product_type ? `• ${prod.product_type}` : ""}
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                marginTop: "2px",
+                              }}
+                            >
+                              <s-badge
+                                tone={
+                                  prod.status.toUpperCase() === "ACTIVE"
+                                    ? "success"
+                                    : prod.status.toUpperCase() === "DRAFT"
+                                    ? "warning"
+                                    : "info"
+                                }
+                              >
+                                {prod.status}
+                              </s-badge>
+                              <span style={{ fontSize: "12px", color: "#616161" }}>
+                                {prod.vendor || "No vendor"}{" "}
+                                {prod.product_type ? `• ${prod.product_type}` : ""}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -1399,6 +1544,14 @@ export default function Index() {
                       </s-table-cell>
                       <s-table-cell>
                         {formatMoney(prod.gross_sales, currency)}
+                      </s-table-cell>
+                      <s-table-cell>
+                        {formatMoney(prod.discounts, currency)}
+                      </s-table-cell>
+                      <s-table-cell>
+                        <span style={{ color: Number(prod.refunds) > 0 ? "#b00020" : undefined }}>
+                          {formatMoney(prod.refunds, currency)}
+                        </span>
                       </s-table-cell>
                       <s-table-cell>{prod.units_sold.toLocaleString()}</s-table-cell>
                       <s-table-cell>{prod.orders.toLocaleString()}</s-table-cell>
