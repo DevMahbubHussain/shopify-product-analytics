@@ -21,37 +21,40 @@ use Illuminate\Support\Facades\Route;
 | Public & S2S API Routes
 |--------------------------------------------------------------------------
 */
+$healthCheckHandler = function (): JsonResponse {
+    $dbOk = true;
+    $redisOk = true;
+
+    try {
+        DB::connection()->getPdo();
+    } catch (\Throwable) {
+        $dbOk = false;
+    }
+
+    try {
+        Redis::connection()->ping();
+    } catch (\Throwable) {
+        $redisOk = false;
+    }
+
+    $allHealthy = $dbOk && $redisOk;
+
+    return response()->json(
+        [
+            'status' => $allHealthy ? 'healthy' : 'degraded',
+            'database' => $dbOk ? 'connected' : 'disconnected',
+            'redis' => $redisOk ? 'connected' : 'disconnected',
+            'timestamp' => now()->toISOString(),
+        ],
+        $allHealthy ? 200 : 503
+    );
+};
+
+Route::get('/healthz', $healthCheckHandler);
+
 Route::prefix('/api/v1')->group(
-    function () {
-        Route::get(
-            '/health', function (): JsonResponse {
-                $dbOk = true;
-                $redisOk = true;
-
-                try {
-                    DB::connection()->getPdo();
-                } catch (\Throwable) {
-                    $dbOk = false;
-                }
-
-                try {
-                    Redis::connection()->ping();
-                } catch (\Throwable) {
-                    $redisOk = false;
-                }
-
-                $allHealthy = $dbOk && $redisOk;
-
-                return response()->json(
-                    [
-                    'status' => $allHealthy ? 'healthy' : 'degraded',
-                    'database' => $dbOk ? 'connected' : 'disconnected',
-                    'redis' => $redisOk ? 'connected' : 'disconnected',
-                    'timestamp' => now()->toISOString(),
-                    ], $allHealthy ? 200 : 503
-                );
-            }
-        );
+    function () use ($healthCheckHandler) {
+        Route::get('/health', $healthCheckHandler);
 
         Route::middleware('s2s')->group(
             function (): void {

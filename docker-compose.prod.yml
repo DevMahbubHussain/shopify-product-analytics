@@ -1,0 +1,155 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: spa_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-shopify_analytics}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    container_name: spa_redis_prod
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  backend:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/php/Dockerfile.production
+    container_name: spa_backend_prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  laravel-worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/php/Dockerfile.production
+    container_name: spa_worker_prod
+    restart: unless-stopped
+    command: php artisan queue:work redis --queue=default,exports --sleep=3 --tries=5 --timeout=90
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - app-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  shopify-app:
+    build:
+      context: ./shopify-app
+      dockerfile: Dockerfile.production
+    container_name: spa_shopify_app_prod
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgresql://${DB_USERNAME:-postgres}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@postgres:5432/shopify_sessions
+      BACKEND_API_URL: http://backend:8000
+      S2S_SHARED_SECRET: ${S2S_SHARED_SECRET:?Set S2S_SHARED_SECRET in .env}
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:?Set SHOPIFY_API_KEY in .env}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:?Set SHOPIFY_API_SECRET in .env}
+      SCOPES: ${SCOPES:?Set SCOPES in .env}
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:?Set SHOPIFY_APP_URL in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  nginx:
+    image: nginx:alpine
+    container_name: spa_nginx_prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      shopify-app:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  app-network:
+    driver: bridge
