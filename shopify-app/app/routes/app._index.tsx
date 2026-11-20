@@ -33,6 +33,12 @@ import {
   ShimmerStyle,
   TrendChartSkeleton,
 } from "../features/analytics/AnalyticsSkeleton.tsx";
+import { SyncProgressCard } from "../features/analytics/SyncProgressCard.tsx";
+import { EmptyStateCard } from "../features/analytics/EmptyStateCard.tsx";
+import {
+  getEmptyStateConfig,
+  type EmptyStateAction,
+} from "../features/analytics/emptyState.ts";
 
 type SyncState = ShopSyncStatus["state"];
 
@@ -338,6 +344,7 @@ function ExportButton({ from, to }: { from: string; to: string }) {
 
 export default function Index() {
   const {
+    shopDomain,
     syncStatus,
     dateRange,
     overview,
@@ -466,6 +473,22 @@ export default function Index() {
     }
   }, [searchParams, handleNavigate]);
 
+  const handleEmptyStateAction = useCallback(
+    (actionKey: EmptyStateAction["actionKey"]) => {
+      if (actionKey === "clear_filters") {
+        setSearchValue("");
+        handleNavigate({ search: undefined, status: undefined, page: 1 }, { replace: true });
+      } else if (actionKey === "select_30d") {
+        setShowCustomPicker(false);
+        handleNavigate({ preset: "30d", from: undefined, to: undefined, page: 1 });
+      } else if (actionKey === "select_90d") {
+        setShowCustomPicker(false);
+        handleNavigate({ preset: "90d", from: undefined, to: undefined, page: 1 });
+      }
+    },
+    [handleNavigate],
+  );
+
   return (
     <s-page heading="Product Analytics" inlineSize="large">
       <s-button slot="secondary-actions" variant="tertiary" href="/app/pricing">
@@ -518,12 +541,10 @@ export default function Index() {
 
       {/* Sync Status Notifications */}
       {syncStatus.state === "syncing" && (
-        <s-banner heading="Syncing your store data" tone="info">
-          <s-paragraph>
-            We are currently importing your products, orders, and refund history in the
-            background. This dashboard updates automatically as records arrive.
-          </s-paragraph>
-        </s-banner>
+        <SyncProgressCard
+          syncRun={syncStatus.syncRun}
+          isSyncing={true}
+        />
       )}
 
       {syncStatus.state === "failed" && (
@@ -953,6 +974,17 @@ export default function Index() {
             </div>
           </div>
         ) : null}
+
+        {overview && Number(overview.summary.orders) === 0 && Number(overview.summary.gross_sales) === 0 && (
+          <EmptyStateCard
+            config={getEmptyStateConfig({
+              variant: "zero_sales",
+              dateRange,
+              shopDomain,
+            })}
+            onAction={handleEmptyStateAction}
+          />
+        )}
       </s-section>
 
       {/* Sales Trend Visualization */}
@@ -1560,18 +1592,15 @@ export default function Index() {
                 </s-table-body>
               </s-table>
             ) : (
-              <div
-                style={{ padding: "40px", textAlign: "center", color: "#616161" }}
-              >
-                <div style={{ fontSize: "28px", marginBottom: "8px" }}>📊</div>
-                <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                  No product metrics found
-                </div>
-                <div style={{ fontSize: "13px" }}>
-                  Try selecting a different date range or clearing your search
-                  filters.
-                </div>
-              </div>
+              <EmptyStateCard
+                config={getEmptyStateConfig({
+                  variant: "zero_filter_results",
+                  searchQuery: searchParams.get("search") || undefined,
+                  statusFilter: searchParams.get("status") || undefined,
+                  dateRange,
+                })}
+                onAction={handleEmptyStateAction}
+              />
             )}
 
             {/* Table Pagination */}
