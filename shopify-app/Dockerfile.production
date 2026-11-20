@@ -1,0 +1,60 @@
+# ==========================================
+# Stage 1: Build & Assets Compilation
+# ==========================================
+FROM node:22-alpine AS builder
+
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY package.json package-lock.json* ./
+
+# Install all dependencies (including devDependencies needed for build)
+RUN npm ci
+
+# Copy application source and configuration
+COPY . .
+
+# Generate Prisma client for Postgres session storage
+RUN npx prisma generate
+
+# Compile React Router server and client bundles
+RUN npm run build
+
+# ==========================================
+# Stage 2: Hardened Production Runtime
+# ==========================================
+FROM node:22-alpine AS runner
+
+RUN apk add --no-cache openssl curl
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Install production dependencies only
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Copy generated Prisma artifacts and migrations
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+# Copy compiled React Router build artifacts
+COPY --from=builder /app/build ./build
+
+# Set permissions for non-root node user
+RUN chown -R node:node /app
+
+USER node
+
+EXPOSE 3000
+
+# Container healthcheck probing the unauthenticated /healthz route
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3000/healthz || exit 1
+
+# Launch production server after running pending session migrations
+CMD ["npm", "run", "docker-start"]

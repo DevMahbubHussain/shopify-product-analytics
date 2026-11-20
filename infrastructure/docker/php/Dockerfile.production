@@ -1,0 +1,68 @@
+# ==========================================
+# Stage 1: Dependency Installation
+# ==========================================
+FROM composer:2 AS vendor
+
+WORKDIR /app
+
+COPY backend/composer.json backend/composer.lock ./
+
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --prefer-dist \
+    --optimize-autoloader \
+    --no-scripts
+
+# ==========================================
+# Stage 2: Hardened Production Runtime
+# ==========================================
+FROM php:8.3-cli-alpine
+
+# Install production system dependencies
+RUN apk add --no-cache \
+    curl \
+    postgresql-libs \
+    libpng \
+    libxml2 \
+    $PHPIZE_DEPS \
+    postgresql-dev
+
+# Install required PHP extensions
+RUN docker-php-ext-install pdo pdo_pgsql pgsql bcmath pcntl opcache
+
+# Install Redis extension via PECL
+RUN pecl install redis && docker-php-ext-enable redis
+
+# Clean build dependencies to minimize image size
+RUN apk del $PHPIZE_DEPS postgresql-dev
+
+# Configure OPcache for high-performance production execution
+RUN echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \
+    echo "opcache.enable_cli=1" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \
+    echo "opcache.memory_consumption=256" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \
+    echo "opcache.interned_strings_buffer=16" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \
+    echo "opcache.max_accelerated_files=20000" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \
+    echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini
+
+# Set working directory
+WORKDIR /var/www/backend
+
+# Copy application code
+COPY backend/ .
+
+# Copy installed production dependencies from vendor stage
+COPY --from=vendor /app/vendor/ ./vendor/
+
+# Set file permissions for www-data
+RUN chown -R www-data:www-data /var/www/backend/storage /var/www/backend/bootstrap/cache
+
+USER www-data
+
+EXPOSE 8000
+
+# Container healthcheck probing /healthz
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8000/healthz || exit 1
+
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
