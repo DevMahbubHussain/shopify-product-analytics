@@ -8,6 +8,7 @@ use App\Enums\ShopStatus;
 use App\Ingestion\Exceptions\InactiveShop;
 use App\Ingestion\Exceptions\UnknownShop;
 use App\Models\Shop;
+use App\Services\PlanEntitlementService;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
@@ -53,8 +54,15 @@ class AnalyticsDateRangeRequest extends FormRequest
                 $from = CarbonImmutable::createFromFormat('Y-m-d', (string) $this->query('from'));
                 $to = CarbonImmutable::createFromFormat('Y-m-d', (string) $this->query('to'));
 
-                if ($from !== false && $to !== false && $from->diffInDays($to) > 365) {
-                    $validator->errors()->add('to', 'The date range cannot exceed 365 days.');
+                if ($from !== false && $to !== false) {
+                    if ($from->diffInDays($to) > 365) {
+                        $validator->errors()->add('to', 'The date range cannot exceed 365 days.');
+
+                        return;
+                    }
+
+                    $shop = $this->resolveShop();
+                    app(PlanEntitlementService::class)->enforceDateRangeLimit($shop, $from, $to);
                 }
             }
         });

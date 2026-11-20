@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import type {
   HeadersFunction,
   LoaderFunctionArgs,
@@ -93,21 +94,59 @@ export default function ProductDetailPage() {
   const currentPreset = dateRange.preset;
   const currency = productDetail?.currency || "USD";
 
-  function buildUrl(updates: Record<string, string | number | undefined>): string {
-    const next = new URLSearchParams(searchParams);
-    for (const [key, value] of Object.entries(updates)) {
-      if (value === undefined || value === "") {
-        next.delete(key);
-      } else {
-        next.set(key, String(value));
+  const buildUrl = useCallback(
+    (updates: Record<string, string | number | undefined>): string => {
+      const next = new URLSearchParams(searchParams);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value === undefined || value === "") {
+          next.delete(key);
+        } else {
+          next.set(key, String(value));
+        }
       }
-    }
-    return `?${next.toString()}`;
-  }
+      return `?${next.toString()}`;
+    },
+    [searchParams],
+  );
 
-  function handleNavigate(updates: Record<string, string | number | undefined>) {
-    navigate(buildUrl(updates), { preventScrollReset: true });
-  }
+  const handleNavigate = useCallback(
+    (updates: Record<string, string | number | undefined>) => {
+      navigate(buildUrl(updates), { preventScrollReset: true });
+    },
+    [buildUrl, navigate],
+  );
+
+  const [showCustomPicker, setShowCustomPicker] = useState(
+    currentPreset === "custom",
+  );
+  const [customFrom, setCustomFrom] = useState(dateRange.from);
+  const [customTo, setCustomTo] = useState(dateRange.to);
+  const [dateError, setDateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCustomFrom(dateRange.from);
+    setCustomTo(dateRange.to);
+    if (currentPreset === "custom") {
+      setShowCustomPicker(true);
+    }
+  }, [dateRange, currentPreset]);
+
+  const handleApplyCustomDate = useCallback(() => {
+    if (!customFrom || !customTo) {
+      setDateError("Please select both start and end dates.");
+      return;
+    }
+    if (customFrom > customTo) {
+      setDateError("Start date cannot be after end date.");
+      return;
+    }
+    setDateError(null);
+    handleNavigate({
+      preset: "custom",
+      from: customFrom,
+      to: customTo,
+    });
+  }, [customFrom, customTo, handleNavigate]);
 
   if (notFound || !productDetail) {
     return (
@@ -132,6 +171,11 @@ export default function ProductDetailPage() {
   const comparison = productDetail.comparison;
   const variants = variantAnalytics?.variants ?? [];
 
+  const backUrl =
+    currentPreset === "custom"
+      ? `/app?preset=custom&from=${dateRange.from}&to=${dateRange.to}`
+      : `/app?preset=${currentPreset}`;
+
   return (
     <s-page heading={prod.title}>
       <ShimmerStyle />
@@ -139,7 +183,7 @@ export default function ProductDetailPage() {
       {/* Navigation Breadcrumb */}
       <div style={{ marginBottom: "16px" }}>
         <Link
-          to={`/app?preset=${currentPreset}`}
+          to={backUrl}
           style={{
             color: "#005bd3",
             textDecoration: "none",
@@ -170,19 +214,28 @@ export default function ProductDetailPage() {
           }}
         >
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-            {DATE_PRESETS.filter((p) => p.key !== "custom").map((preset) => {
-              const isActive = currentPreset === preset.key;
+            {DATE_PRESETS.map((preset) => {
+              const isActive =
+                preset.key === "custom"
+                  ? currentPreset === "custom" || showCustomPicker
+                  : currentPreset === preset.key;
+
               return (
                 <s-button
                   key={preset.key}
                   variant={isActive ? "primary" : "secondary"}
-                  onClick={() =>
-                    handleNavigate({
-                      preset: preset.key,
-                      from: undefined,
-                      to: undefined,
-                    })
-                  }
+                  onClick={() => {
+                    if (preset.key === "custom") {
+                      setShowCustomPicker((prev) => !prev);
+                    } else {
+                      setShowCustomPicker(false);
+                      handleNavigate({
+                        preset: preset.key,
+                        from: undefined,
+                        to: undefined,
+                      });
+                    }
+                  }}
                 >
                   {preset.label}
                 </s-button>
@@ -193,6 +246,104 @@ export default function ProductDetailPage() {
             <strong>{dateRange.from}</strong> to <strong>{dateRange.to}</strong>
           </div>
         </div>
+
+        {/* Polaris Custom Date Range Selector Panel */}
+        {showCustomPicker && (
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e1e3e5",
+              borderRadius: "8px",
+              padding: "16px",
+              marginTop: "8px",
+              marginBottom: "8px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "16px",
+                alignItems: "flex-end",
+              }}
+            >
+              <div style={{ minWidth: "160px" }}>
+                <s-date-field
+                  label="Start date"
+                  value={customFrom}
+                  defaultValue={customFrom}
+                  onChange={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomFrom(val);
+                      setDateError(null);
+                    }
+                  }}
+                  onInput={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomFrom(val);
+                      setDateError(null);
+                    }
+                  }}
+                />
+              </div>
+              <div style={{ minWidth: "160px" }}>
+                <s-date-field
+                  label="End date"
+                  value={customTo}
+                  defaultValue={customTo}
+                  onChange={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomTo(val);
+                      setDateError(null);
+                    }
+                  }}
+                  onInput={(e: Event) => {
+                    const target = (e.currentTarget || e.target) as HTMLInputElement | null;
+                    const val = target?.value;
+                    if (val) {
+                      setCustomTo(val);
+                      setDateError(null);
+                    }
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <s-button variant="primary" onClick={handleApplyCustomDate}>
+                  Apply Range
+                </s-button>
+                <s-button
+                  variant="secondary"
+                  onClick={() => {
+                    setShowCustomPicker(false);
+                    setCustomFrom(dateRange.from);
+                    setCustomTo(dateRange.to);
+                    setDateError(null);
+                  }}
+                >
+                  Cancel
+                </s-button>
+              </div>
+            </div>
+
+            {dateError && (
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "#b00020",
+                  marginTop: "8px",
+                }}
+              >
+                {dateError}
+              </div>
+            )}
+          </div>
+        )}
       </s-section>
 
       {/* Main Content or Loading Skeleton */}

@@ -157,6 +157,44 @@ export class BackendClient {
 
     return (await response.json()) as TResponse;
   }
+
+  public async getRaw(
+    path: string,
+    shopDomain: string,
+    correlationId: string = randomUUID(),
+    params?: QueryParams,
+  ): Promise<Response> {
+    const [pathOnly, inlineQuery] = path.split("?");
+    const normalizedPath = normalizePath(pathOnly);
+    const queryString = buildQueryString(inlineQuery, params);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const nonce = randomUUID();
+
+    const response = await fetch(`${this.baseUrl}${normalizedPath}${queryString}`, {
+      method: "GET",
+      headers: {
+        Accept: "*/*",
+        "X-App-Shop-Domain": shopDomain,
+        "X-App-Timestamp": timestamp.toString(),
+        "X-App-Nonce": nonce,
+        "X-App-Signature": this.generateSignature(
+          "GET",
+          normalizedPath,
+          timestamp,
+          nonce,
+          shopDomain,
+          "",
+        ),
+        "X-Correlation-ID": correlationId,
+      },
+    });
+
+    if (!response.ok) {
+      throw new BackendError(response.status, await response.text());
+    }
+
+    return response;
+  }
 }
 
 let sharedClient: BackendClient | undefined;

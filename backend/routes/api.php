@@ -6,7 +6,9 @@ use App\Http\Controllers\Analytics\OverviewAnalyticsController;
 use App\Http\Controllers\Analytics\ProductDetailAnalyticsController;
 use App\Http\Controllers\Analytics\ProductPerformanceController;
 use App\Http\Controllers\Analytics\SalesTrendController;
+use App\Http\Controllers\Exports\ProductExportController;
 use App\Http\Controllers\Internal\IngestionController;
+use App\Http\Controllers\Internal\SubscriptionStatusController;
 use App\Http\Controllers\Internal\SyncStatusController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -63,6 +65,14 @@ Route::prefix('/api/v1')->group(
                         Route::get('sales-trend', SalesTrendController::class);
                     }
                 );
+
+                Route::prefix('exports')->controller(ProductExportController::class)->group(
+                    function (): void {
+                        Route::post('products', 'store');
+                        Route::get('{id}', 'show');
+                        Route::get('{id}/download', 'download');
+                    }
+                );
             }
         );
     }
@@ -88,6 +98,8 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(
             }
         );
 
+        Route::get('subscription', [SubscriptionStatusController::class, 'show']);
+
         Route::prefix('sync')->controller(SyncStatusController::class)->group(
             function (): void {
                 Route::get('status', 'show');
@@ -107,6 +119,8 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(
                     Route::post('refunds', 'refunds');
                     Route::post('webhook-events', 'webhookEvents');
                     Route::post('sync-status', 'syncStatus');
+                    Route::post('subscription', 'subscription');
+                    Route::post('shop-redact', 'shopRedact');
                 }
             );
     }
