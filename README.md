@@ -1,188 +1,22 @@
-# Shopify Product Analytics — Multi-Tenant Architecture & Boilerplate
+# Shopify Product Analytics — Multi-Tenant Architecture & Application
 
-An enterprise-ready, containerized, multi-tenant Shopify application architecture featuring a decoupled dual-runtime stack:
-1. **Shopify App Gateway (Frontend & Webhook Ingestion):** Node.js 22 / TypeScript, Shopify's React Router app template with App Bridge and the GraphQL Admin API.
-2. **Analytics & Data Processing Engine (Backend):** Laravel 13 REST API, PostgreSQL 16, Redis 7, and dedicated background queue workers.
-3. **Cryptographic S2S Trust Boundary:** Deterministic HMAC-SHA256 request signing with timestamp + single-use nonce replay protection and tenant context binding.
+An enterprise-grade, embedded Shopify application delivering product-level sales reporting, variant analytics, and performance insights for Shopify merchants inside Shopify Admin.
 
-> **Starting a new Shopify app from this repo?** Follow [STARTER.md](STARTER.md) (tag `v0.1.0-starter`).
-
-### Current Status
-
-| Area | Status |
-|---|---|
-| Docker stack, env/secrets handling, S2S boundary, test harness | Done |
-| Shopify app config (`shopify.app.toml` template + gitignored `shopify.app.local.toml`, API `2026-10`, managed install) | Done |
-| Multi-tenant domain schema (10 tables) | Done |
-| Ingestion API (8 signed endpoints) | Done |
-| Embedded Shopify app: official React Router template, Postgres sessions, S2S signer, install and uninstall synced to Laravel | Done (Step 3, groups B–C) |
-| Shopify data sync (GraphQL harvester, normalizers, analytics webhooks), Polaris dashboard | Planned |
-| Metric aggregation, analytics REST API, billing, exports | Planned |
-
-Boxes in the topology below marked *(planned)* describe the target architecture.
+Built on a decoupled, dual-runtime architecture:
+1. **Shopify App Gateway (Embedded UI & Ingestion):** Node.js 22 / TypeScript, Shopify React Router app template with App Bridge, Polaris web components, and GraphQL Admin API (`2026-10`).
+2. **Analytics & Data Processing Engine (Backend):** Laravel 13 REST API on PHP 8.3 CLI, PostgreSQL 16, Redis 7, and dedicated background queue workers.
+3. **Cryptographic S2S Trust Boundary:** Deterministic HMAC-SHA256 request signing with timestamp (±300 s window), single-use nonce replay protection, and strict tenant context isolation.
 
 ---
 
-## Features
-
-Each feature lists what it provides, where it lives, and how it talks to the rest of the system. Full explainers are linked.
-
-### 1. Service-to-Service (S2S) Trust Boundary
-
-**Provides:** proof that every request reaching Laravel's private API came from our own Shopify gateway, was not tampered with, and is not a replay, plus the verified store (tenant) it belongs to.
-
-| Part | Location |
-|---|---|
-| Request signer | `shopify-app/app/lib/backend/backendClient.server.ts` (test next to it) |
-| Signature, timestamp, and nonce check | `backend/app/Http/Middleware/VerifyS2SSignature.php` |
-| Correlation IDs for tracing | `backend/app/Http/Middleware/AssignCorrelationId.php` |
-
-**How it communicates:** the gateway signs `METHOD, PATH, TIMESTAMP, NONCE, SHOP_DOMAIN, sha256(body)` with the shared secret and sends `X-App-*` headers. Laravel recomputes the HMAC, rejects clock drift beyond ±300 s, claims the nonce once in Redis, then exposes the verified `shop_domain` to the rest of the request. Contract: [§3](#3-cryptographic-s2s-trust-boundary) and `AGENTS.md` §2.4.
-
-### 2. Multi-Tenant Domain Schema
-
-**Provides:** PostgreSQL storage for shops, products, variants, orders, line items, refunds, daily metrics, sync runs, webhook deliveries, and subscriptions, where the database itself guarantees correctness:
-- every row belongs to one shop, and cross-shop references are impossible (composite foreign keys)
-- re-imports cannot duplicate rows (unique Shopify GID keys)
-- sales history survives product deletion (soft deletes plus guarded foreign keys)
-- money is exact `DECIMAL(20,6)` with a validated currency code
-
-| Part | Location |
-|---|---|
-| Migrations | `backend/database/migrations/2026_11_18_0000*` |
-| Schema tests | `backend/tests/Feature/Database/` |
-| Explainer | [docs/migrations.md](docs/migrations.md) |
-
-**How it communicates:** only Laravel reads or writes it. Dashboards will read only the precomputed `product_daily_metrics` table (2 ms for a 30-day overview at 109,000 rows).
-
-### 3. Ingestion API
-
-**Provides:** eight private endpoints through which the gateway pushes Shopify data into Laravel:
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /internal/v1/ingestion/shop` | Install, refresh, or reactivate a store |
-| `POST /internal/v1/ingestion/shop-uninstall` | Mark a store uninstalled (ignores late deliveries after reinstall) |
-| `POST /internal/v1/ingestion/products` | Upsert products with variants |
-| `POST /internal/v1/ingestion/products-delete` | Soft-delete products and their variants; history kept |
-| `POST /internal/v1/ingestion/orders` | Upsert orders with line items |
-| `POST /internal/v1/ingestion/refunds` | Upsert refund lines |
-| `POST /internal/v1/ingestion/webhook-events` | Record a webhook delivery and detect repeats |
-| `POST /internal/v1/ingestion/sync-status` | Track a sync run from start to finish |
-
-Guarantees: safe retries (no duplicates), stale out-of-order updates ignored, tenant taken only from the signed header, strict validation (string money, timezone-aware timestamps, typed GIDs), and under 200 ms per request (250 line items in about 125 ms).
-
-| Part | Location |
-|---|---|
-| Endpoint → pipeline mapping | `backend/app/Http/Controllers/Internal/IngestionController.php` |
-| Validation and typed input | `backend/app/Http/Requests/Internal/`, `backend/app/Data/Ingestion/` |
-| Pipeline steps and safe upserts | `backend/app/Ingestion/` |
-| Payload contract | [docs/ingestion-api.md](docs/ingestion-api.md) |
-| File-by-file explainer | [docs/ingestion-pipeline.md](docs/ingestion-pipeline.md) |
-
-**How it communicates:** the gateway calls it with signed JSON (Feature 1). Each request passes through `FormRequest → readonly DTO → Pipeline (ResolveShopTenant → Upsert… → DispatchIngestedEvents)`. After the write commits, Laravel fires `OrdersIngested` / `RefundsIngested`, which the Step 4 aggregation jobs will consume through Redis queues.
-
-### 4. Platform Foundations
-
-**Provides:** a reproducible local stack, with no secrets in git and tests that never touch development data.
-- Secrets live only in gitignored `.env` files; compose refuses to start when a value is missing.
-- `backend/.env` is the single Laravel config source, so the HTTP server and the queue worker share cache prefixes and Redis locks.
-- Tests run on their own PostgreSQL database and Redis databases, guarded by `TestEnvironmentIsolationTest`.
-
-Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.md](STARTER.md).
-
-### 5. Embedded Shopify App (Template Baseline)
-
-**Provides:** the merchant-facing Shopify app, built from Shopify's official React Router template (Shopify CLI 5.0.2, `@shopify/shopify-app-react-router` 4.0.3, React Router 7.18.2). It gives us Shopify's own, maintained implementation of:
-- **Install and authentication:** Shopify-managed install; `authenticate.admin()` validates each merchant request and handles token exchange.
-- **Session storage:** each store's access token is stored server-side (Prisma `Session` table in PostgreSQL database `shopify_sessions`) and never leaves `shopify-app` (C2).
-- **Shop registration:** after install or re-authentication, the `afterAuth` hook reads `shop { id currencyCode ianaTimezone }` and registers the store in Laravel (`/internal/v1/ingestion/shop`).
-- **Uninstall sync:** the `app/uninstalled` webhook is verified by HMAC only (no token refresh), Laravel records the uninstall at Shopify's trigger time, and only then are the store's sessions deleted. Late deliveries after a reinstall leave the shop and its token intact. Details: [docs/shop-lifecycle.md](docs/shop-lifecycle.md).
-- **Embedded UI shell:** App Bridge layout inside Shopify Admin (`app/routes/app.tsx`), with routes created from file names.
-- **Verified webhooks:** `authenticate.webhook()` checks Shopify's `X-Shopify-Hmac-Sha256` signature before any handler code runs.
-- **GraphQL Admin API client:** `admin.graphql()` with the store's token.
-
-| Part | Location | Role |
-|---|---|---|
-| Shopify setup | `shopify-app/app/shopify.server.ts` | API key/secret, scopes, API version `2026-10`, session storage, `afterAuth` hook |
-| Sessions | `shopify-app/prisma/schema.prisma`, `prisma/migrations/`, `app/db.server.ts` | PostgreSQL `Session` table holding store tokens |
-| S2S signer | `shopify-app/app/lib/backend/backendClient.server.ts` | Signs every request to Laravel |
-| Shop registration | `shopify-app/app/features/shop-lifecycle/registerShop.server.ts` | Shop query → `ingestion/shop` |
-| Uninstall sync | `shopify-app/app/lib/shopify/verifyWebhook.server.ts`, `shopify-app/app/features/shop-lifecycle/{uninstallShop,appUninstalled}.server.ts` | HMAC check, signed `ingestion/shop-uninstall`, Laravel-first session cleanup |
-| Install/login callbacks | `shopify-app/app/routes/auth.$.tsx` | Shopify `/auth/*` flow |
-| Admin layout | `shopify-app/app/routes/app.tsx` | Authenticates the merchant, starts App Bridge, nav |
-| Webhooks | `shopify-app/app/routes/webhooks.*.tsx` | `app/uninstalled` (HMAC-only, synced to Laravel), `app/scopes_update` (template) |
-| App config | `shopify-app/shopify.app.toml` (placeholder `client_id`) + gitignored `shopify.app.local.toml` (real `client_id`) | Scopes `read_products,read_orders`, webhooks API `2026-10`, managed install |
-| Dev runner | `shopify-app/shopify.web.toml` | How `shopify app dev` starts the server; loads `shopify-app/.env` via `--env-file-if-exists` |
-| Container | `shopify-app/Dockerfile`, `.dockerignore` | Production build under compose profile `app`; no secrets in the image |
-
-**How it communicates:**
-- **Merchant browser ⇄ shopify-app:** HTTPS inside the Shopify Admin iframe (App Bridge session token).
-- **shopify-app ⇄ Shopify:** GraphQL Admin API `2026-10` with the stored token; webhooks inbound, verified by HMAC.
-- **shopify-app → backend:** S2S-signed JSON (Feature 1).
-
-**Customizations applied to the template (Step 3, one file per step):**
-
-| # | Change | Why |
-|---|---|---|
-| 1 | API version `July26` → `October26` | Match the pinned `2026-10` |
-| 2 | Sessions: SQLite → PostgreSQL database `shopify_sessions` | Durable, Docker/production-ready, separate from Laravel's data |
-| 3 | Removed template demo code (product generator page, additional page, demo metafield/metaobject/event, demo product webhook) | Demo needs `write_products`, which this app does not request |
-| 4 | Ported the S2S signer and its tests (`npm test`) | Talk to Laravel |
-| 5 | After install → `ingestion/shop` | Laravel knows every installed store |
-| 6 | Node 22 container under compose profile `app`; `.dockerignore` keeps secrets out | Template requires Node ≥ 22.12 |
-| 7 | `app/uninstalled` handler: HMAC-only verification, Laravel first, then sessions | The template handler returned 500 once the expiring offline token could no longer be refreshed |
-
-**Starter template:** this state is tagged **`v0.1.0-starter`**: new Shopify projects start with a working, installable embedded app connected to Laravel.
-
----
-
-## How the Parts Communicate
-
-```
- Merchant browser (Shopify Admin)
-        │  App Bridge iframe                    (template baseline; dashboard: Step 6)
-        ▼
- ┌──────────────────────────┐   GraphQL Admin API (OAuth token)   ┌─────────────────┐
- │ shopify-app (Node 22)    │ ──────────────────────────────────► │ Shopify         │
- │ gateway / integration    │ ◄────────────────────────────────── │ platform        │
- │                          │   Webhooks (X-Shopify-Hmac-Sha256)  └─────────────────┘
- └────────────┬─────────────┘
-              │  Signed JSON over the internal Docker network
-              │  X-App-Shop-Domain · X-App-Timestamp · X-App-Nonce · X-App-Signature
-              ▼
- ┌──────────────────────────┐  writes / reads   ┌──────────────────┐
- │ backend (Laravel 13)     │ ────────────────► │ PostgreSQL 16    │
- │ /internal/v1/ingestion/* │                   └──────────────────┘
- │ /api/v1/*  (planned)     │  nonces, rate     ┌──────────────────┐
- │                          │  limits, queue ─► │ Redis 7          │
- └──────────────────────────┘                   └────────┬─────────┘
-                                                         │ OrdersIngested / RefundsIngested
-                                                         ▼
-                                                ┌──────────────────┐
-                                                │ laravel-worker   │  aggregation (planned: Step 4)
-                                                └──────────────────┘
-```
-
-| From → To | Channel | Security | Status |
-|---|---|---|---|
-| Shopify → shopify-app | HTTPS webhooks | `X-Shopify-Hmac-Sha256`, verified by `authenticate.webhook()` | Template baseline (app lifecycle topics); analytics topics in Step 3 |
-| shopify-app → Shopify | GraphQL Admin API `2026-10` | Store access token from session storage (never leaves shopify-app) | Client available (template); sync queries in Step 3 |
-| shopify-app → backend | Signed JSON (host dev: `localhost:8000`; container: `backend:8000`) | HMAC-SHA256 + ±300 s timestamp + single-use nonce + per-shop rate limit | Done (shop registration on install); data sync in Step 3 |
-| backend → PostgreSQL | SQL | Tenant-scoped queries, composite foreign keys | Done |
-| backend → Redis | Cache, rate limiter, queues | Internal network only | Done (queues used from Step 4) |
-| Redis → laravel-worker | Queued jobs from ingestion events | — | Planned (Step 4) |
-| Browser → backend | Never direct; always through shopify-app | — | By design |
-
----
-
-## 1. Architectural Topology
+## Architecture & System Overview
 
 ```
                    ┌────────────────────────────────────────────────────────┐
                    │                     Shopify Platform                   │
                    │  - Shopify Admin (Embedded App Bridge UI)              │
-                   │  - Webhook Dispatcher (GDPR, Orders, Products, App)    │
+                   │  - Webhook Dispatcher (GDPR, Orders, Refunds, App)     │
+                   │  - Shopify Billing API (Recurring Subscriptions)       │
                    └──────────────────────────┬─────────────────────────────┘
                                               │ Public HTTPS
                                               ▼
@@ -190,10 +24,11 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 │  Shopify App Gateway (Node.js 22 / TypeScript, React Router)                           │
 │  Container: spa_shopify_app | Port: 3000                                               │
 │                                                                                        │
-│  - Session Storage & Managed Install / Token Exchange (template)                       │
-│  - App Bridge Embedded Layout (template); Polaris dashboard (planned)                  │
-│  - Webhook HMAC Verification (template); analytics webhooks (planned)                  │
-│  - Cryptographic S2S Client (HMAC-SHA256 Signing + Correlation IDs)                    │
+│  - Session Storage & Managed Install / Token Exchange (Prisma PostgreSQL)              │
+│  - App Bridge Embedded Layout & Polaris Web Components (<s-page>, <s-table>)           │
+│  - GraphQL Admin API Harvester (Cursor Pagination & Leaky Bucket Rate Limiting)        │
+│  - Webhook Ingestion & HMAC Verification (App Lifecycle, Orders, Refunds, Subscriptions)│
+│  - Cryptographic S2S Client (HMAC-SHA256 Signing + Nonce + Correlation IDs)            │
 └─────────────────────────────────────────────┬──────────────────────────────────────────┘
                                               │ Internal Network (S2S Signed Traffic)
                                               │ Headers: X-App-Shop-Domain,
@@ -208,8 +43,11 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 │                                                                                        │
 │  - VerifyS2SSignature Middleware (Constant-time HMAC, ±300s window, Redis nonce)       │
 │  - Multi-tenant Context Injection ($request->attributes->set('shop_domain', ...))      │
-│  - Ingestion API: FormRequest → Readonly DTO → Pipeline → Guarded Upsert               │
-│  - Ingestion Events → Aggregation Jobs (aggregation planned)                           │
+│  - Multi-stage Ingestion Pipelines (FormRequest → Readonly DTO → Pipeline → Upsert)   │
+│  - Domain Events (OrderIngested, RefundIngested) → Persistent Redis Queue Buffers     │
+│  - Analytics REST API (/api/v1/analytics/*) hitting Precomputed Metric Rollups         │
+│  - Plan Entitlement Enforcement (Free 30-day limit vs Pro 365-day history)             │
+│  - Asynchronous CSV Export Engine & Streaming Dispatcher                               │
 └───────────────────────────┬─────────────────────────────────────────┬──────────────────┘
                             │                                         │
                             ▼                                         ▼
@@ -218,216 +56,314 @@ Details: [§4](#4-quick-start--local-setup), `AGENTS.md` §2.1–2.3, [STARTER.m
 │  Container: spa_postgres | Port: 5433 │   │  Container: spa_redis | Port: 6379         │
 │                                       │   └─────────────────────┬──────────────────────┘
 │  - Multi-tenant Relational Schemas    │                         │
-│  - Metric Aggregations & Rollups      │                         ▼
-│  - Idempotent Event Log Ledger        │   ┌────────────────────────────────────────────┐
-└───────────────────────────────────────┘   │  Dedicated Queue Worker                    │
-                                            │  Container: spa_worker                     │
-                                            │                                            │
-                                            │  - Asynchronous Webhook Pipelines          │
-                                            │  - Daily & Hourly Aggregation Rollups      │
-                                            └────────────────────────────────────────────┘
+│  - Precomputed Daily Rollups          │                         ▼
+│    (product_daily_metrics, sub-50ms)  │   ┌────────────────────────────────────────────┐
+│  - Compound Unique Idempotency Keys   │   │  Dedicated Queue Worker                    │
+│  - Strict Financial Precision         │   │  Container: spa_worker                     │
+│    DECIMAL(20,6) & Currency Isolation │   │                                            │
+│  - Zero Protected Customer Data (PCD) │   │  - AggregateProductDailyMetricsJob         │
+│  - Idempotent Webhook Events Ledger   │   │  - GenerateCsvExportJob                    │
+│  - Durable Subscriptions & Exports    │   │  - Exponential Backoff & Deadlock Recovery │
+└───────────────────────────────────────┘   └────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Infrastructure Services
+## Core Features & Capabilities
 
-The stack is containerized with Docker Compose and tuned for macOS virtualization (Colima with `vz` hypervisor and `virtiofs` mounts):
+### 1. Embedded Polaris Analytics Dashboard
+- **Overview KPI Cards:** Real-time visibility into Net Sales, Gross Sales, Discounts, Refunds, Units Sold, Orders, and Average Order Revenue with preceding period comparisons (percentage change and directional badges).
+- **Interactive Metric Definitions Help Panel:** Collapsible definition grid explaining exact accounting formulas.
+- **Visual Sales Trend Visualizer:** Interactive daily and monthly bar chart breakdown of store revenue velocity.
+- **Product Performance Table:** Searchable, sortable catalog table displaying SKU metrics, status badges (`ACTIVE`, `DRAFT`, `ARCHIVED`), unit velocity, and refund amounts.
+- **Product & Variant Drilldown (`/app/products/:id`):** Deep-dive reporting into individual products with variant breakdown tables and inventory-level metrics.
+- **Date Preset Selector Toolbar:** Instant filtering across `Today`, `Yesterday`, `Last 7 days`, `Last 30 days`, `Last 90 days`, `This month`, `Last month`, and `Custom` calendar ranges.
+- **Day 0 Merchant Onboarding Stepper:** Contextual 4-step sync progress stepper (`Connecting`, `Products`, `Orders & Refunds`, `Metrics Aggregation`) with live record counters and filter reset triggers.
 
-| Service | Container Name | Base Image | Host Port | Purpose | Health Check |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`postgres`** | `spa_postgres` | `postgres:16-alpine` | `5433` (container `5432`) | Databases `shopify_analytics`, `shopify_analytics_test`, `shopify_sessions` | `pg_isready -U postgres` |
-| **`redis`** | `spa_redis` | `redis:7-alpine` | `6379` | Queue broker, cache, rate limits | `redis-cli ping` |
-| **`backend`** | `spa_backend` | `php:8.3-cli` (custom) | `8000` | Laravel REST API application | HTTP `/api/v1/health` |
-| **`laravel-worker`** | `spa_worker` | `php:8.3-cli` (custom) | — | Continuous queue worker (`php artisan queue:work redis`) | Process status |
-| **`shopify-app`** | `spa_shopify_app` | `node:22-alpine` (`shopify-app/Dockerfile`) | `3000` | Production-style app server; compose profile `app` only. Development runs on the host with `shopify app dev --config local` | — |
+### 2. High-Throughput Background Ingestion & Aggregation
+- **Historical Catalogue & Order Harvester:** Automatic bulk ingestion upon install using cursor pagination, GraphQL cost tracking, and rate limiter protection.
+- **Deterministic Incremental Webhooks:** Real-time listeners for `orders/create`, `orders/updated`, `refunds/create`, `app_subscriptions/update`, and `app/uninstalled`.
+- **Precomputed Daily Rollups (`product_daily_metrics`):** Aggregation worker processes domain events asynchronously into indexed daily rollups, ensuring dashboard response times stay sub-50ms without table scans.
+- **Strict Financial Precision:** All monetary amounts are stored as `DECIMAL(20,6)` with ISO 4217 currency isolation. Floating-point arithmetic is prohibited.
 
-Host port 5433 avoids a local PostgreSQL on 5432 intercepting connections. Containers still reach the database as `postgres:5432`.
+### 3. Plans, Subscriptions & Monetization
+- **Shopify Managed App Subscriptions:** Embedded billing integration using Shopify Billing GraphQL API with recurring 30-day billing intervals and a 7-day risk-free trial.
+- **Free Tier ($0/month):** Up to 30 days of historical reporting, standard overview KPIs, product performance table, and variant drilldowns.
+- **Pro Tier ($19/month):** Unlocks 365 days of historical reporting, preceding period comparisons, priority webhook processing, and unlimited CSV exports.
+- **Plan Entitlement Gating:** Free tier requests beyond 30 days are automatically restricted with informative upgrade barriers.
 
----
+### 4. Asynchronous CSV Data Exports
+- **Background Queue Processing:** Heavy export requests are dispatched to Redis workers (`GenerateCsvExportJob`) using chunked database cursors (`lazy()`) to keep memory usage flat.
+- **Signed Download Links:** Completed exports generate secure temporary files with automated status polling.
 
-## 3. Cryptographic S2S Trust Boundary
+### 5. Security & Shopify App Store Compliance
+- **Zero Protected Customer Data (PCD):** Automated audit test suites verify that zero customer personal data (names, email addresses, phone numbers, physical addresses) is ever collected or persisted.
+- **Mandatory Compliance Webhooks:** Verified handlers for `customers/data_request`, `customers/redact`, and `shop/redact`.
+- **Strict S2S Trust Boundary:** Request signing with HMAC-SHA256, single-use Redis nonces, and timestamp verification (±300 s window). Shopify access tokens never leave the gateway or touch Laravel.
 
-All communication between the Shopify Gateway and the Laravel Backend is secured via a zero-trust cryptographic signature scheme:
-
-### Canonical Signature Construction
-```
-CANONICAL_PAYLOAD = METHOD + "\n" +
-                    PATH + "\n" +
-                    TIMESTAMP + "\n" +
-                    NONCE + "\n" +
-                    SHOP_DOMAIN + "\n" +
-                    SHA256(BODY_JSON)
-
-SIGNATURE = HMAC_SHA256(SECRET, CANONICAL_PAYLOAD)
-```
-
-### Required Security Headers
-- `X-App-Shop-Domain`: Target merchant store (e.g. `merchant-store.myshopify.com`).
-- `X-App-Timestamp`: Unix timestamp (UTC seconds). Drift beyond ±300 seconds (inclusive bound, `S2S_TOLERANCE_SECONDS`) is rejected with `401 Unauthorized`.
-- `X-App-Nonce`: UUID, single use. Claimed atomically in Redis (`Cache::store('redis')->add`) for twice the tolerance window after the signature verifies; reuse is rejected with `401 Unauthorized`.
-- `X-App-Signature`: Hex-encoded HMAC-SHA256 of the canonical payload, verified with `hash_equals()`.
-- `X-Correlation-ID`: UUID echoed on every Laravel response, generated when absent or malformed, and attached to log context and queued job payloads via `Context`.
-
-The shared secret is `S2S_SHARED_SECRET`. Both sides refuse to run without it; there is no fallback value.
+### 6. Automated E2E Browser Testing (Playwright)
+- Headless Chromium end-to-end browser specifications verifying gateway availability, route authentication barriers, KPI rendering, interactive accordions, search/filter controls, and billing flows.
 
 ---
 
-## 4. Quick Start & Local Setup
+## Development and Deployment Using Docker (with Commands)
 
-### Prerequisites
-- macOS with [Colima](https://github.com/abiosoft/colima) and Docker CLI:
-  ```bash
-  brew install colima docker docker-compose
-  ```
+The project includes Docker Compose configurations for both local development (Colima on macOS or Docker on Linux) and production-hardened container deployments.
 
-### Step 1: Start Colima
-Run Colima with native virtualization and high-speed filesystem mounting:
+### Local Development Environment
+
+```
+Host (macOS / Linux)
+├── shopify-app/ (Node 22, host dev server: shopify app dev --config local)
+└── Docker Compose Containers (Colima daemon):
+    ├── spa_postgres   (PostgreSQL 16 on host port 5433, container port 5432)
+    ├── spa_redis      (Redis 7 on host port 6379)
+    ├── spa_backend    (Laravel 13 REST API on host port 8000)
+    └── spa_worker     (Continuous queue worker)
+```
+
+#### Step 1: Start Docker / Colima
+If running on macOS with Colima:
 ```bash
 colima start --cpu 4 --memory 8 --disk 60 --vm-type=vz --mount-type=virtiofs
-export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock   # if docker cannot find the daemon
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
 ```
 
-### Step 2: Configure Environment Files
-Secrets are never committed. Three gitignored files, each with one job:
+#### Step 2: Configure Environment Files
+Secrets are never committed. Three environment files isolate concerns:
 
-| File | Read by | Holds |
+| File | Read by | Purpose |
 |---|---|---|
-| `backend/.env` | Every Laravel process (HTTP server, queue worker, CLI, tests) | All Laravel config: `APP_KEY`, DB, Redis, prefixes, `S2S_SHARED_SECRET` |
-| `.env` (root) | `docker compose` interpolation only | `DB_*` for `postgres`; `S2S_SHARED_SECRET`, `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SCOPES`, `SHOPIFY_APP_URL` for the `shopify-app` container |
-| `shopify-app/.env` | Host dev: Prisma CLI and `shopify app dev` | `DATABASE_URL` (`localhost:5433/shopify_sessions`), `BACKEND_API_URL`, `S2S_SHARED_SECRET` |
+| `backend/.env` | Laravel HTTP, CLI, queue workers, tests | Database, Redis, S2S secret, cache prefixes |
+| `.env` (root) | Docker Compose | Container credentials and Shopify app secrets |
+| `shopify-app/.env` | Host dev server and Prisma CLI | Session database URL, S2S shared secret |
 
-Compose injects no Laravel environment into `backend` or `laravel-worker`, so the HTTP server and the worker always resolve identical config (same `APP_NAME`, `REDIS_PREFIX=spa-database-`, `CACHE_PREFIX=spa-cache-`), which keeps cache keys and Redis locks shared across processes.
-
-1. Create the root and backend env files:
+1. Create environment files from examples:
    ```bash
    cp .env.example .env
    cp backend/.env.example backend/.env
    ```
-2. Generate secrets:
+
+2. Generate application keys and S2S shared secret:
    ```bash
-   echo "APP_KEY=base64:$(openssl rand -base64 32)"   # backend/.env only
-   echo "S2S_SHARED_SECRET=$(openssl rand -hex 32)"   # same value in .env and backend/.env
+   echo "APP_KEY=base64:$(openssl rand -base64 32)"     # Add to backend/.env
+   echo "S2S_SHARED_SECRET=$(openssl rand -hex 32)"     # Must match in .env and backend/.env
    ```
-3. Fill the Shopify values in the root `.env` from Dev Dashboard → App → Settings:
+
+3. Configure Shopify app credentials in the root `.env`:
    ```dotenv
-   SHOPIFY_API_KEY=<client id>
-   SHOPIFY_API_SECRET=<client secret>
+   SHOPIFY_API_KEY=<your-shopify-client-id>
+   SHOPIFY_API_SECRET=<your-shopify-client-secret>
    SCOPES=read_products,read_orders
    SHOPIFY_APP_URL=http://localhost:3000
    ```
-   `SHOPIFY_API_SECRET` lives only in the root `.env`; Laravel never receives Shopify credentials.
-   The committed `shopify-app/shopify.app.toml` keeps a placeholder `client_id`; put the real one in the gitignored `shopify-app/shopify.app.local.toml` and run the CLI with `--config local` (see [STARTER.md](STARTER.md#4-create-the-app-in-the-shopify-dev-dashboard)).
-4. Values that must match across the root and backend files: `S2S_SHARED_SECRET`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
-5. Create `shopify-app/.env` from the root values (secrets are copied, never printed):
+
+4. Generate `shopify-app/.env` matching the database password and S2S secret:
    ```bash
    cd shopify-app && set -a && . ../.env && set +a && printf 'DATABASE_URL="postgresql://%s:%s@localhost:5433/shopify_sessions"\nBACKEND_API_URL=http://localhost:8000\nS2S_SHARED_SECRET=%s\n' "$DB_USERNAME" "$DB_PASSWORD" "$S2S_SHARED_SECRET" > .env && cd ..
    ```
 
-### Step 3: Install Dependencies and Launch Containers
-The backend image does not bundle dependencies (source is bind-mounted):
+#### Step 3: Build & Launch Local Docker Services
+The backend image bind-mounts source code for rapid iteration:
 ```bash
+# Build backend and worker images
 docker compose build
+
+# Install Composer dependencies inside container
 docker compose run --rm --no-deps backend composer install
-docker compose up -d                # backend, laravel-worker, postgres, redis
-```
 
-The Shopify app runs on the host with the Shopify CLI during development (Node ≥ 22.12, `npm install -g @shopify/cli@latest`):
-```bash
-cd shopify-app
-npm install
-npm run setup                       # prisma generate + migrate deploy (shopify_sessions)
-shopify app dev --config local      # tunnel + hot reload; uses the real client_id from shopify.app.local.toml
-```
-Always pass `--config local`: plain `shopify app dev` reads the placeholder `client_id` and fails with `no app was found for the provided apiKey`.
+# Start backend, postgres, redis, and laravel-worker
+docker compose up -d
 
-Verify service status:
-```bash
+# Verify container health
 docker compose ps
 ```
 
-### Step 4: Run Database Migrations
+#### Step 4: Run Database Migrations
 ```bash
+# Migrate application tables (shops, products, orders, metrics, subscriptions, exports)
 docker compose exec backend php artisan migrate
+```
+
+#### Step 5: Start the Shopify App Gateway (Host)
+The embedded app runs on the host using the Shopify CLI (Node ≥ 22.12):
+```bash
+cd shopify-app
+
+# Install dependencies and generate Prisma client
+npm install
+npm run setup
+
+# Launch dev server and tunnel with local config (uses shopify.app.local.toml)
+shopify app dev --config local
+```
+
+Press `p` in the terminal to open the application in your Shopify development store.
+
+---
+
+### Production Container Deployment
+
+The production deployment runs fully containerized via `docker-compose.prod.yml`, utilizing multi-stage production Dockerfiles, non-root users (`node`, `www-data`), OPcache optimization, and an Nginx reverse proxy enforcing Shopify `frame-ancestors` Content Security Policy (CSP).
+
+```
+[ Internet / Load Balancer ]
+            │
+            ▼ Port 80
+┌───────────────────────────────────────┐
+│  Nginx Reverse Proxy (spa_nginx_prod) │
+│  - Gzip compression                   │
+│  - Shopify CSP frame-ancestors        │
+│  - Path routing: /api -> backend      │
+│                  /*   -> shopify-app  │
+└───────────┬───────────────┬───────────┘
+            │               │
+            ▼               ▼
+┌───────────────────┐   ┌────────────────────────────────────────┐
+│  shopify-app      │   │  backend (PHP 8.3 OPcache / Artisan)   │
+│  Port: 3000       │   │  Port: 8000                            │
+└───────────────────┘   └────────────────────────────────────────┘
+```
+
+#### Production Build & Launch Commands
+```bash
+# 1. Build production images (multi-stage, production dependencies only)
+docker compose -f docker-compose.prod.yml build
+
+# 2. Start the production stack in background
+docker compose -f docker-compose.prod.yml up -d
+
+# 3. Execute database migrations
+docker compose -f docker-compose.prod.yml exec backend php artisan migrate --force
+
+# 4. Verify service status and logs
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f nginx
+docker compose -f docker-compose.prod.yml logs -f backend
+docker compose -f docker-compose.prod.yml logs -f shopify-app
+```
+
+#### Production Health Probes
+```bash
+# Gateway load balancer health check
+curl -I http://localhost/healthz
+# HTTP/1.1 200 OK
+# {"status":"ok","app":"product-analytics-gateway"}
+
+# Backend API health probe
+curl -I http://localhost:8000/api/v1/health
+# HTTP/1.1 200 OK
 ```
 
 ---
 
-## 5. Universal Command Reference
+## Testing & Quality Control
 
-### Service Management
+### Backend Test Suite (Pest)
+Tests run against a dedicated PostgreSQL database (`shopify_analytics_test`) and isolated Redis databases (DB 2/3), ensuring zero interference with development data:
 ```bash
-# Start all services in background
-docker compose up -d
+# Run all backend unit, feature, security, and migration tests
+docker compose exec backend ./vendor/bin/pest
 
-# Stop all services
-docker compose down
+# Run targeted test file
+docker compose exec backend ./vendor/bin/pest tests/Feature/Analytics/AnalyticsOverviewApiTest.php
+```
+**Current Status:** `257 passed (2,925 assertions)`
 
-# View aggregated logs
+### Frontend Unit & Domain Tests (Node Native Runner)
+In-process unit testing for date calculations, S2S request signatures, GraphQL pagination, and state reducers:
+```bash
+cd shopify-app
+
+# Run all TypeScript unit tests
+npm test
+
+# Run React Router type generation & strict TypeScript compilation
+npm run typecheck
+
+# Run ESLint
+npm run lint
+```
+**Current Status:** `168 passed (9 test suites)`
+
+### Frontend End-to-End Browser Tests (Playwright)
+Headless Chromium browser automation exercising App Bridge layout, KPI cards, metric definitions accordion, filter pills, search input, and pricing tables:
+```bash
+cd shopify-app
+
+# Run full E2E test suite in headless mode
+npm run test:e2e
+
+# Run with visible browser window
+npx playwright test --headed
+
+# Run interactive Playwright UI mode with DOM visual debugger
+npx playwright test --ui
+
+# Inspect HTML report and trace archives
+npx playwright show-report
+```
+**Current Status:** `12 passed, 3 skipped (conditional development store tests)`
+
+---
+
+## Universal Operational Commands
+
+### Container Management
+```bash
+# Tail logs for all containers
 docker compose logs -f
 
-# View specific service logs
+# Tail specific container logs
 docker compose logs -f backend
 docker compose logs -f laravel-worker
 
-# Optional: production-style Shopify app container (profile "app")
-docker compose --profile app up -d --build shopify-app
-docker compose logs -f shopify-app
-```
-
-### Testing & Quality Control
-```bash
-# Run Laravel Pest test suite (Feature & Unit tests)
-# Runs on PostgreSQL database shopify_analytics_test (RefreshDatabase) and
-# Redis DBs 2/3 with spa-test-* prefixes; never touches development data.
-docker compose exec backend ./vendor/bin/pest
-
-# Shopify app (host, inside shopify-app/)
-npm test              # node --test: S2S signer, shop registration, webhook verification, uninstall
-npm run typecheck     # React Router type generation + tsc --noEmit
-npm run lint          # ESLint
-```
-
-### Live S2S Verification
-Install or open the app in your dev store (`shopify app dev --config local`, press `p`). The `afterAuth` hook sends a signed request to Laravel; confirm the store arrived:
-```bash
-docker compose exec postgres psql -U postgres -d shopify_analytics -c "select shop_domain, status, currency_code, timezone from shops"
-```
-Expected: one row per installed store, `status = active`, with the store's currency and IANA timezone. Unsigned requests are rejected:
-```bash
-curl -s -X POST http://localhost:8000/internal/v1/ingestion/shop -H "Content-Type: application/json" -d '{}'
-# {"error":"..."}  (HTTP 401)
-```
-
-### Laravel Artisan & CLI
-```bash
-# Run Artisan commands inside container
-docker compose exec backend php artisan route:list
-docker compose exec backend php artisan tinker
-
-# Queue monitoring
-docker compose exec backend php artisan queue:monitor default
+# Stop all local containers
+docker compose down
 ```
 
 ### Database & Cache Direct Access
 ```bash
-# Connect to PostgreSQL CLI (from the host directly: localhost:5433)
-docker compose exec postgres psql -U postgres -d shopify_analytics   # Laravel data
-docker compose exec postgres psql -U postgres -d shopify_sessions    # Shopify app sessions
+# Connect to PostgreSQL analytics database (host port 5433)
+docker compose exec postgres psql -U postgres -d shopify_analytics
+
+# Connect to PostgreSQL session database
+docker compose exec postgres psql -U postgres -d shopify_sessions
 
 # Connect to Redis CLI
 docker compose exec redis redis-cli ping
 ```
 
+### Laravel CLI & Queue Monitoring
+```bash
+# Monitor active queue workers
+docker compose exec backend php artisan queue:monitor default
+
+# Open Laravel Tinker REPL
+docker compose exec backend php artisan tinker
+
+# View registered routes
+docker compose exec backend php artisan route:list
+```
+
+### Live S2S Verification
+After installing the app in a store (`shopify app dev --config local`), verify that the shop was ingested into PostgreSQL:
+```bash
+docker compose exec postgres psql -U postgres -d shopify_analytics -c "select shop_domain, status, currency_code, timezone from shops"
+```
+
 ---
 
-## 6. Using as a Starter Template for Any Shopify App
+## Documentation Index
 
-The full step-by-step guide lives in [STARTER.md](STARTER.md): fresh-history clone of `v0.1.0-starter`, identifiers to rename, Dev Dashboard app creation, env files, boot, install, and the recommended build order.
-
-`v0.1.0-starter` contains the backend stack, the domain schema and ingestion API, and the customized Shopify React Router app (Feature 5) that registers each installed store in Laravel. Starter tags use the `-starter` suffix so product releases keep plain version numbers.
-
-```bash
-git clone --branch v0.1.0-starter --depth 1 https://github.com/DevMahbubHussain/shopify-product-analytics.git my-shopify-app
-cd my-shopify-app && rm -rf .git && git init -b main
-```
+| Guide | Description |
+|---|---|
+| [docs/e2e-testing.md](docs/e2e-testing.md) | Playwright automated browser test suite architecture and execution |
+| [docs/production-deployment.md](docs/production-deployment.md) | Multi-stage Docker packaging, Nginx CSP configuration, and load balancing |
+| [docs/app-store-compliance.md](docs/app-store-compliance.md) | Protected Customer Data (PCD) audit and mandatory compliance webhooks |
+| [docs/privacy-policy.md](docs/privacy-policy.md) | Public merchant and customer privacy policy |
+| [docs/polaris-ui.md](docs/polaris-ui.md) | Polaris web components, layout, date pickers, and dashboard design |
+| [docs/billing-exports.md](docs/billing-exports.md) | Shopify App Subscriptions and asynchronous CSV export pipelines |
+| [docs/analytics-engine.md](docs/analytics-engine.md) | Metric aggregation formulas, rollups, and PostgreSQL index optimization |
+| [docs/migrations.md](docs/migrations.md) | Multi-tenant database schema specification and relationship topology |
+| [docs/shop-lifecycle.md](docs/shop-lifecycle.md) | Managed installation token exchange and uninstall webhook cleanup |
