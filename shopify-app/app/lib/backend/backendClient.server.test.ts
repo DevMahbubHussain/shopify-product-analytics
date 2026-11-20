@@ -184,3 +184,60 @@ test("getInternal throws with the status code on a failed response", async () =>
     },
   );
 });
+
+test("getInternal strips inline query string from canonical signed path while preserving URL", async () => {
+  const fetchStub = stubFetch(Response.json({ data: { gross_sales: "100.00" } }));
+  const client = new BackendClient({ baseUrl: "http://backend:8000", secret });
+
+  const result = await client.getInternal<{ data: { gross_sales: string } }>(
+    "/api/v1/analytics/overview?from=2026-01-01&to=2026-01-07",
+    shop,
+    "corr-789",
+  );
+
+  assert.deepEqual(result, { data: { gross_sales: "100.00" } });
+  const [call] = fetchStub.calls();
+  assert.ok(call);
+  assert.equal(
+    call.url,
+    "http://backend:8000/api/v1/analytics/overview?from=2026-01-01&to=2026-01-07",
+  );
+
+  const headers = new Headers(call.init.headers);
+  const timestamp = headers.get("X-App-Timestamp") ?? "";
+  const nonce = headers.get("X-App-Nonce") ?? "";
+  // Canonical signature MUST use path without query string to match Laravel $request->path()
+  assert.equal(
+    headers.get("X-App-Signature"),
+    expectedGetSignature("/api/v1/analytics/overview", timestamp, nonce),
+  );
+});
+
+test("getInternal accepts query params object and omits them from canonical signed path", async () => {
+  const fetchStub = stubFetch(Response.json({ data: [] }));
+  const client = new BackendClient({ baseUrl: "http://backend:8000", secret });
+
+  await client.getInternal(
+    "/api/v1/products",
+    shop,
+    "corr-abc",
+    { from: "2026-01-01", to: "2026-01-07", page: 2, vendor: undefined },
+  );
+
+  const [call] = fetchStub.calls();
+  assert.ok(call);
+  const parsedUrl = new URL(call.url);
+  assert.equal(parsedUrl.pathname, "/api/v1/products");
+  assert.equal(parsedUrl.searchParams.get("from"), "2026-01-01");
+  assert.equal(parsedUrl.searchParams.get("to"), "2026-01-07");
+  assert.equal(parsedUrl.searchParams.get("page"), "2");
+  assert.equal(parsedUrl.searchParams.has("vendor"), false);
+
+  const headers = new Headers(call.init.headers);
+  const timestamp = headers.get("X-App-Timestamp") ?? "";
+  const nonce = headers.get("X-App-Nonce") ?? "";
+  assert.equal(
+    headers.get("X-App-Signature"),
+    expectedGetSignature("/api/v1/products", timestamp, nonce),
+  );
+});

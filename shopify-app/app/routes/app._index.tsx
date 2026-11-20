@@ -4,28 +4,40 @@ import type {
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher, useLoaderData, useRevalidator } from "react-router";
+import {
+  Form,
+  Link,
+  useFetcher,
+  useLoaderData,
+  useNavigate,
+  useNavigation,
+  useRevalidator,
+  useSearchParams,
+} from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { authenticate, unauthenticated } from "../shopify.server";
-import { backendClient } from "../lib/backend/backendClient.server";
+import { authenticate, unauthenticated } from "../shopify.server.ts";
+import { backendClient } from "../lib/backend/backendClient.server.ts";
 import {
   getSyncStatus,
   type ShopSyncStatus,
-} from "../features/sync/getSyncStatus.server";
-import { triggerHistoricalSync } from "../features/sync/syncTrigger.server";
+} from "../features/sync/getSyncStatus.server.ts";
+import { triggerHistoricalSync } from "../features/sync/syncTrigger.server.ts";
+import {
+  loadOverviewDashboard,
+  type OverviewDashboardData,
+} from "../features/analytics/overviewLoader.server.ts";
+import { DATE_PRESETS } from "../features/analytics/datePresets.ts";
+import type { MetricComparison } from "../lib/backend/analyticsClient.server.ts";
+import {
+  KpiCardsSkeleton,
+  ProductTableSkeleton,
+  ShimmerStyle,
+  TrendChartSkeleton,
+} from "../features/analytics/AnalyticsSkeleton.tsx";
 
 type SyncState = ShopSyncStatus["state"];
 
 const RETRYABLE_STATES: ReadonlySet<SyncState> = new Set(["failed", "stalled"]);
-
-const STATUS_LABELS: Record<SyncState, string> = {
-  never_synced: "Setting up...",
-  syncing: "Importing data...",
-  completed: "Data synchronized",
-  failed: "Sync error",
-  stalled: "Sync stopped responding",
-  backend_error: "Service temporarily unavailable",
-};
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -57,7 +69,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   }
 
-  return { shopDomain, syncStatus };
+  const dashboardData: OverviewDashboardData = await loadOverviewDashboard({
+    request,
+    shopDomain,
+    backend,
+    syncStatus,
+  });
+
+  return dashboardData;
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -99,9 +118,60 @@ function RetryButton() {
   );
 }
 
+function formatMoney(amount: string, currency: string = "USD"): string {
+  const num = Number(amount);
+  if (!Number.isFinite(num)) return `$${amount}`;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency || "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(num);
+  } catch {
+    return `$${num.toFixed(2)}`;
+  }
+}
+
+function ComparisonBadge({ comparison }: { comparison?: MetricComparison }) {
+  if (!comparison) return null;
+
+  const { delta, percentage_change, direction } = comparison;
+  if (percentage_change === null && direction === "flat") {
+    return <s-badge tone="info">0.0%</s-badge>;
+  }
+
+  const sign = direction === "up" ? "+" : "";
+  const pctText =
+    percentage_change !== null
+      ? `${sign}${percentage_change.toFixed(1)}%`
+      : `${sign}${delta}`;
+
+  if (direction === "up") {
+    return <s-badge tone="success">▲ {pctText}</s-badge>;
+  }
+  if (direction === "down") {
+    return <s-badge tone="critical">▼ {pctText}</s-badge>;
+  }
+  return <s-badge tone="info">{pctText}</s-badge>;
+}
+
 export default function Index() {
-  const { shopDomain, syncStatus } = useLoaderData<typeof loader>();
+  const {
+    syncStatus,
+    dateRange,
+    overview,
+    salesTrend,
+    products,
+    analyticsError,
+  } = useLoaderData<typeof loader>();
+
   const revalidator = useRevalidator();
+  const navigation = useNavigation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const isLoading = navigation.state === "loading";
 
   useEffect(() => {
     if (syncStatus.state !== "syncing") {
@@ -117,22 +187,35 @@ export default function Index() {
     return () => clearInterval(interval);
   }, [syncStatus.state, revalidator]);
 
+  const currency = overview?.currency || "USD";
+  const currentPreset = dateRange.preset;
+
+  function buildUrl(updates: Record<string, string | number | undefined>): string {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined || value === "") {
+        next.delete(key);
+      } else {
+        next.set(key, String(value));
+      }
+    }
+    return `?${next.toString()}`;
+  }
+
+  function handleNavigate(updates: Record<string, string | number | undefined>) {
+    navigate(buildUrl(updates), { preventScrollReset: true });
+  }
+
   return (
     <s-page heading="Product Analytics">
+      <ShimmerStyle />
+
+      {/* Sync Status Notifications */}
       {syncStatus.state === "syncing" && (
         <s-banner heading="Syncing your store data" tone="info">
           <s-paragraph>
             We are currently importing your products, orders, and refund history in the
-            background. This may take a few moments depending on catalogue size.
-          </s-paragraph>
-        </s-banner>
-      )}
-
-      {syncStatus.state === "completed" && (
-        <s-banner heading="Sync complete" tone="success">
-          <s-paragraph>
-            Your store is connected and initial data sync is complete. Product and
-            order data will be processed into daily metrics.
+            background. This dashboard updates automatically as records arrive.
           </s-paragraph>
         </s-banner>
       )}
@@ -141,7 +224,7 @@ export default function Index() {
         <s-banner heading="Sync interrupted" tone="critical">
           <s-paragraph>
             We encountered an issue during data synchronization
-            {syncStatus.syncRun.errorCode ? ` (${syncStatus.syncRun.errorCode})` : ""}.
+            {syncStatus.syncRun?.errorCode ? ` (${syncStatus.syncRun.errorCode})` : ""}.
           </s-paragraph>
           <RetryButton />
         </s-banner>
@@ -151,29 +234,608 @@ export default function Index() {
         <s-banner heading="Sync stopped responding" tone="warning">
           <s-paragraph>
             The data import has not reported progress for over 10 minutes and may
-            have been interrupted. Start it again to continue.
+            have been interrupted.
           </s-paragraph>
           <RetryButton />
         </s-banner>
       )}
 
       {syncStatus.state === "backend_error" && (
-        <s-banner heading="Analytics engine temporarily unreachable" tone="warning">
+        <s-banner heading="Analytics engine temporarily unreachable" tone="critical">
           <s-paragraph>
             We could not connect to the analytics backend. Background sync status
-            and analytics reports may be temporarily unavailable. We will automatically
-            reconnect when the service responds.
+            and analytics reports will automatically reconnect when the service responds.
           </s-paragraph>
         </s-banner>
       )}
 
-      <s-section heading="Overview">
-        <s-paragraph>
-          Store domain: <strong>{shopDomain}</strong>
-        </s-paragraph>
-        <s-paragraph>
-          Status: <strong>{STATUS_LABELS[syncStatus.state]}</strong>
-        </s-paragraph>
+      {analyticsError && syncStatus.state !== "backend_error" && (
+        <s-banner heading="Analytics temporarily unavailable" tone="warning">
+          <s-paragraph>{analyticsError}</s-paragraph>
+        </s-banner>
+      )}
+
+      {/* Date Range Selector Toolbar */}
+      <s-section>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px",
+            marginBottom: "8px",
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {DATE_PRESETS.filter((p) => p.key !== "custom").map((preset) => {
+              const isActive = currentPreset === preset.key;
+              return (
+                <s-button
+                  key={preset.key}
+                  variant={isActive ? "primary" : "secondary"}
+                  onClick={() =>
+                    handleNavigate({
+                      preset: preset.key,
+                      from: undefined,
+                      to: undefined,
+                      page: 1,
+                    })
+                  }
+                >
+                  {preset.label}
+                </s-button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: "13px", color: "#616161" }}>
+            <strong>{dateRange.from}</strong> to <strong>{dateRange.to}</strong>
+          </div>
+        </div>
+      </s-section>
+
+      {/* Overview KPI Cards */}
+      <s-section heading="Overview Performance">
+        {isLoading ? (
+          <KpiCardsSkeleton />
+        ) : overview ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "16px",
+            }}
+          >
+            {/* Net Sales */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e1e3e5",
+                borderRadius: "8px",
+                padding: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161", marginBottom: "4px" }}>
+                Net Sales
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 700, marginBottom: "8px" }}>
+                {formatMoney(overview.summary.net_sales, currency)}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                }}
+              >
+                <ComparisonBadge comparison={overview.comparison.net_sales} />
+                <span style={{ color: "#616161" }}>vs previous period</span>
+              </div>
+            </div>
+
+            {/* Gross Sales */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e1e3e5",
+                borderRadius: "8px",
+                padding: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161", marginBottom: "4px" }}>
+                Gross Sales
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 700, marginBottom: "8px" }}>
+                {formatMoney(overview.summary.gross_sales, currency)}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                }}
+              >
+                <ComparisonBadge comparison={overview.comparison.gross_sales} />
+                <span style={{ color: "#616161" }}>vs previous period</span>
+              </div>
+            </div>
+
+            {/* Discounts */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e1e3e5",
+                borderRadius: "8px",
+                padding: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161", marginBottom: "4px" }}>
+                Discounts
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 700, marginBottom: "8px" }}>
+                {formatMoney(overview.summary.discounts, currency)}
+              </div>
+              <div style={{ fontSize: "12px", color: "#616161" }}>Applied across lines</div>
+            </div>
+
+            {/* Refunds */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e1e3e5",
+                borderRadius: "8px",
+                padding: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161", marginBottom: "4px" }}>
+                Refunds
+              </div>
+              <div
+                style={{
+                  fontSize: "24px",
+                  fontWeight: 700,
+                  marginBottom: "8px",
+                  color: Number(overview.summary.refunds) > 0 ? "#b00020" : "#202223",
+                }}
+              >
+                {formatMoney(overview.summary.refunds, currency)}
+              </div>
+              <div style={{ fontSize: "12px", color: "#616161" }}>Returned value</div>
+            </div>
+
+            {/* Units Sold */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e1e3e5",
+                borderRadius: "8px",
+                padding: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161", marginBottom: "4px" }}>
+                Units Sold
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 700, marginBottom: "8px" }}>
+                {overview.summary.units_sold.toLocaleString()}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "12px",
+                }}
+              >
+                <ComparisonBadge comparison={overview.comparison.units_sold} />
+                <span style={{ color: "#616161" }}>vs previous period</span>
+              </div>
+            </div>
+
+            {/* Orders & Average Revenue */}
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e1e3e5",
+                borderRadius: "8px",
+                padding: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161", marginBottom: "4px" }}>
+                Orders
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 700, marginBottom: "8px" }}>
+                {overview.summary.orders.toLocaleString()}
+              </div>
+              <div style={{ fontSize: "12px", color: "#616161" }}>
+                AOR:{" "}
+                <strong>
+                  {formatMoney(overview.summary.average_order_revenue, currency)}
+                </strong>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </s-section>
+
+      {/* Sales Trend Visualization */}
+      <s-section heading="Sales Trend">
+        {isLoading ? (
+          <TrendChartSkeleton />
+        ) : salesTrend && salesTrend.points.length > 0 ? (
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e1e3e5",
+              borderRadius: "8px",
+              padding: "16px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "16px",
+              }}
+            >
+              <div style={{ fontSize: "13px", color: "#616161" }}>
+                Net Sales by {salesTrend.interval} ({currency})
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                {(["day", "week", "month"] as const).map((int) => (
+                  <s-button
+                    key={int}
+                    variant={salesTrend.interval === int ? "primary" : "secondary"}
+                    onClick={() => handleNavigate({ interval: int })}
+                  >
+                    {int.charAt(0).toUpperCase() + int.slice(1)}
+                  </s-button>
+                ))}
+              </div>
+            </div>
+
+            {/* Simple Responsive Bar Chart */}
+            {(() => {
+              const maxVal = Math.max(
+                ...salesTrend.points.map((p) => Math.max(0, Number(p.net_sales))),
+                1,
+              );
+              return (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-end",
+                    gap: "6px",
+                    height: "140px",
+                    paddingTop: "10px",
+                    borderBottom: "1px solid #e1e3e5",
+                  }}
+                >
+                  {salesTrend.points.map((pt) => {
+                    const val = Math.max(0, Number(pt.net_sales));
+                    const heightPct = Math.round((val / maxVal) * 100);
+                    return (
+                      <div
+                        key={pt.date}
+                        title={`${pt.date}: ${formatMoney(pt.net_sales, currency)} (${pt.units_sold} units)`}
+                        style={{
+                          flex: 1,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          height: "100%",
+                          justifyContent: "flex-end",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: "100%",
+                            maxWidth: "32px",
+                            height: `${Math.max(4, heightPct)}%`,
+                            backgroundColor: val > 0 ? "#008060" : "#e1e3e5",
+                            borderRadius: "3px 3px 0 0",
+                            transition: "height 0.2s ease",
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: "11px",
+                color: "#8c9196",
+                marginTop: "6px",
+              }}
+            >
+              <span>{salesTrend.points[0]?.date}</span>
+              {salesTrend.points.length > 2 && (
+                <span>
+                  {salesTrend.points[Math.floor(salesTrend.points.length / 2)]?.date}
+                </span>
+              )}
+              <span>{salesTrend.points[salesTrend.points.length - 1]?.date}</span>
+            </div>
+          </div>
+        ) : null}
+      </s-section>
+
+      {/* Product Performance Table */}
+      <s-section heading="Product Performance">
+        {isLoading ? (
+          <ProductTableSkeleton />
+        ) : (
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e1e3e5",
+              borderRadius: "8px",
+              overflow: "hidden",
+            }}
+          >
+            {/* Table Search & Controls */}
+            <div
+              style={{
+                padding: "12px 16px",
+                borderBottom: "1px solid #e1e3e5",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "12px",
+                alignItems: "center",
+              }}
+            >
+              <Form
+                method="get"
+                style={{ display: "flex", gap: "8px", flex: 1, minWidth: "220px" }}
+              >
+                <input type="hidden" name="preset" value={dateRange.preset} />
+                <input
+                  type="text"
+                  name="search"
+                  defaultValue={searchParams.get("search") ?? ""}
+                  placeholder="Search products by title..."
+                  style={{
+                    flex: 1,
+                    padding: "6px 10px",
+                    borderRadius: "4px",
+                    border: "1px solid #c9cccf",
+                    fontSize: "13px",
+                  }}
+                />
+                <s-button type="submit">Search</s-button>
+                {searchParams.has("search") && (
+                  <s-button
+                    variant="secondary"
+                    onClick={() => handleNavigate({ search: undefined, page: 1 })}
+                  >
+                    Clear
+                  </s-button>
+                )}
+              </Form>
+            </div>
+
+            {/* Table Data */}
+            {products && products.data.length > 0 ? (
+              <s-table>
+                <s-table-header-row>
+                  <s-table-header>Product</s-table-header>
+                  <s-table-header>
+                    <s-button
+                      variant="tertiary"
+                      onClick={() =>
+                        handleNavigate({
+                          sort_by: "net_sales",
+                          sort_direction:
+                            searchParams.get("sort_by") === "net_sales" &&
+                            searchParams.get("sort_direction") === "desc"
+                              ? "asc"
+                              : "desc",
+                        })
+                      }
+                    >
+                      Net Sales{" "}
+                      {searchParams.get("sort_by") === "net_sales"
+                        ? searchParams.get("sort_direction") === "asc"
+                          ? "▲"
+                          : "▼"
+                        : ""}
+                    </s-button>
+                  </s-table-header>
+                  <s-table-header>
+                    <s-button
+                      variant="tertiary"
+                      onClick={() =>
+                        handleNavigate({
+                          sort_by: "gross_sales",
+                          sort_direction:
+                            searchParams.get("sort_by") === "gross_sales" &&
+                            searchParams.get("sort_direction") === "desc"
+                              ? "asc"
+                              : "desc",
+                        })
+                      }
+                    >
+                      Gross Sales{" "}
+                      {searchParams.get("sort_by") === "gross_sales"
+                        ? searchParams.get("sort_direction") === "asc"
+                          ? "▲"
+                          : "▼"
+                        : ""}
+                    </s-button>
+                  </s-table-header>
+                  <s-table-header>
+                    <s-button
+                      variant="tertiary"
+                      onClick={() =>
+                        handleNavigate({
+                          sort_by: "units_sold",
+                          sort_direction:
+                            searchParams.get("sort_by") === "units_sold" &&
+                            searchParams.get("sort_direction") === "desc"
+                              ? "asc"
+                              : "desc",
+                        })
+                      }
+                    >
+                      Units{" "}
+                      {searchParams.get("sort_by") === "units_sold"
+                        ? searchParams.get("sort_direction") === "asc"
+                          ? "▲"
+                          : "▼"
+                        : ""}
+                    </s-button>
+                  </s-table-header>
+                  <s-table-header>
+                    <s-button
+                      variant="tertiary"
+                      onClick={() =>
+                        handleNavigate({
+                          sort_by: "orders",
+                          sort_direction:
+                            searchParams.get("sort_by") === "orders" &&
+                            searchParams.get("sort_direction") === "desc"
+                              ? "asc"
+                              : "desc",
+                        })
+                      }
+                    >
+                      Orders{" "}
+                      {searchParams.get("sort_by") === "orders"
+                        ? searchParams.get("sort_direction") === "asc"
+                          ? "▲"
+                          : "▼"
+                        : ""}
+                    </s-button>
+                  </s-table-header>
+                </s-table-header-row>
+                <s-table-body>
+                  {products.data.map((prod) => (
+                    <s-table-row key={prod.id}>
+                      <s-table-cell>
+                        <div
+                          style={{ display: "flex", alignItems: "center", gap: "10px" }}
+                        >
+                          {prod.image_url ? (
+                            <img
+                              src={prod.image_url}
+                              alt={prod.title}
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                objectFit: "cover",
+                                borderRadius: "4px",
+                                border: "1px solid #e1e3e5",
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                background: "#f1f2f3",
+                                borderRadius: "4px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "16px",
+                              }}
+                            >
+                              📦
+                            </div>
+                          )}
+                          <div>
+                            <Link
+                              to={`/app/products/${prod.id}?preset=${currentPreset}`}
+                              style={{
+                                fontWeight: 600,
+                                color: "#005bd3",
+                                textDecoration: "none",
+                              }}
+                            >
+                              {prod.title}
+                            </Link>
+                            <div style={{ fontSize: "12px", color: "#616161" }}>
+                              {prod.vendor || "No vendor"}{" "}
+                              {prod.product_type ? `• ${prod.product_type}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                      </s-table-cell>
+                      <s-table-cell>
+                        <strong>{formatMoney(prod.net_sales, currency)}</strong>
+                      </s-table-cell>
+                      <s-table-cell>
+                        {formatMoney(prod.gross_sales, currency)}
+                      </s-table-cell>
+                      <s-table-cell>{prod.units_sold.toLocaleString()}</s-table-cell>
+                      <s-table-cell>{prod.orders.toLocaleString()}</s-table-cell>
+                    </s-table-row>
+                  ))}
+                </s-table-body>
+              </s-table>
+            ) : (
+              <div
+                style={{ padding: "40px", textAlign: "center", color: "#616161" }}
+              >
+                <div style={{ fontSize: "28px", marginBottom: "8px" }}>📊</div>
+                <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                  No product metrics found
+                </div>
+                <div style={{ fontSize: "13px" }}>
+                  Try selecting a different date range or clearing your search
+                  filters.
+                </div>
+              </div>
+            )}
+
+            {/* Table Pagination */}
+            {products && products.meta.last_page > 1 && (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "12px 16px",
+                  borderTop: "1px solid #e1e3e5",
+                  fontSize: "13px",
+                }}
+              >
+                <div style={{ color: "#616161" }}>
+                  Showing page <strong>{products.meta.current_page}</strong> of{" "}
+                  <strong>{products.meta.last_page}</strong> ({products.meta.total}{" "}
+                  products)
+                </div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <s-button
+                    disabled={products.meta.current_page <= 1 || isLoading}
+                    onClick={() =>
+                      handleNavigate({ page: products.meta.current_page - 1 })
+                    }
+                  >
+                    Previous
+                  </s-button>
+                  <s-button
+                    disabled={
+                      products.meta.current_page >= products.meta.last_page ||
+                      isLoading
+                    }
+                    onClick={() =>
+                      handleNavigate({ page: products.meta.current_page + 1 })
+                    }
+                  >
+                    Next
+                  </s-button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </s-section>
     </s-page>
   );

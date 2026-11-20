@@ -27,6 +27,27 @@ function normalizePath(path: string): string {
   return "/" + path.replace(/^\/+/, "");
 }
 
+export type QueryParams = Record<
+  string,
+  string | number | boolean | undefined | null
+>;
+
+function buildQueryString(
+  inlineQuery?: string,
+  params?: QueryParams,
+): string {
+  const searchParams = new URLSearchParams(inlineQuery ?? "");
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        searchParams.set(key, String(value));
+      }
+    }
+  }
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
+
 export class BackendClient {
   private readonly baseUrl: string;
   private readonly secret: string;
@@ -103,12 +124,15 @@ export class BackendClient {
     path: string,
     shopDomain: string,
     correlationId: string = randomUUID(),
+    params?: QueryParams,
   ): Promise<TResponse> {
-    const normalizedPath = normalizePath(path);
+    const [pathOnly, inlineQuery] = path.split("?");
+    const normalizedPath = normalizePath(pathOnly);
+    const queryString = buildQueryString(inlineQuery, params);
     const timestamp = Math.floor(Date.now() / 1000);
     const nonce = randomUUID();
 
-    const response = await fetch(`${this.baseUrl}${normalizedPath}`, {
+    const response = await fetch(`${this.baseUrl}${normalizedPath}${queryString}`, {
       method: "GET",
       headers: {
         Accept: "application/json",
