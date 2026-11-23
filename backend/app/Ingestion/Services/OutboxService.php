@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-final class OutboxService
+class OutboxService
 {
     /**
      * Records a domain event inside the outbox table.

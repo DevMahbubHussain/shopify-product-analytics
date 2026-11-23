@@ -23,35 +23,30 @@ beforeEach(function (): void {
 });
 
 it('proves idempotent metric convergence when fast-path dispatches but crashes before markPublished', function (): void {
-    // Track total dispatches across the entire test lifecycle
-    $totalDispatches = 0;
-    Event::listen(OrdersIngested::class, function () use (&$totalDispatches): void {
-        $totalDispatches++;
-    });
+    // 1. Intercept queue pushes to prove Redis/queue subsystem independently receives both jobs
+    \Illuminate\Support\Facades\Queue::fake([AggregateProductDailyMetricsJob::class]);
 
-    // 1. Bind crash-simulating pipe: event() dispatches successfully to Redis,
-    // but the process terminates or DB connection drops before markPublished() executes.
-    $this->app->bind(\App\Ingestion\Pipes\DispatchIngestedEvents::class, function () {
-        return new class {
-            public function handle(\App\Ingestion\IngestionContext $context, \Closure $next): \App\Ingestion\IngestionResponse
-            {
-                // Fast-path dispatch succeeds
-                foreach ($context->events as $event) {
-                    event($event);
-                }
+    // 2. Bind a simulated OutboxService test double that throws during markPublished()
+    // The real DispatchIngestedEvents pipe is used; it invokes markPublished(), catches the error, and leaves record pending
+    $simulatedOutbox = new class extends OutboxService {
+        public int $markPublishedCalls = 0;
+        public bool $shouldCrashOnMarkPublished = true;
 
-                // CRASH WINDOW: Process dies / markPublished() fails, leaving outbox record pending
-                // Log warning as fast-path error handler does
-                \Illuminate\Support\Facades\Log::warning('Simulated fast-path process crash before markPublished execution', [
-                    'outbox_ids' => $context->outboxIds,
-                ]);
+        public function markPublished(string $outboxId): void
+        {
+            $this->markPublishedCalls++;
 
-                return $next($context);
+            if ($this->shouldCrashOnMarkPublished) {
+                throw new \RuntimeException('Simulated process crash / DB disconnection right after event dispatch');
             }
-        };
-    });
 
-    // 2. Ingest an order through HTTP endpoint
+            parent::markPublished($outboxId);
+        }
+    };
+
+    $this->app->instance(OutboxService::class, $simulatedOutbox);
+
+    // 3. Ingest an order through HTTP endpoint using the REAL DispatchIngestedEvents pipe
     $orderData = orderPayload(1, [
         'processed_at' => '2026-05-15T12:00:00Z',
         'shopify_updated_at' => '2026-05-15T12:00:00Z',
@@ -68,13 +63,15 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
         ->assertOk()
         ->assertExactJson(['received' => 1, 'written' => 1, 'skipped_stale' => 0]);
 
-    // VERIFY INITIAL DISPATCH:
-    // event($event) succeeded and was dispatched to Redis queue (count = 1)
-    expect($totalDispatches)->toBe(1);
+    // VERIFY FIRST QUEUE DISPATCH:
+    // Event listener QueueMetricAggregationsFromOrders pushed the first aggregation job to Redis/queue
+    \Illuminate\Support\Facades\Queue::assertPushed(AggregateProductDailyMetricsJob::class, 1);
 
-    // VERIFY PUBLISHED STATUS UPDATE FAILED:
-    // Because of the crash, markPublished() was not executed, so the outbox record
-    // genuinely remained in 'pending' status with dispatched_at = null
+    // VERIFY MARK_PUBLISHED FAILED & WAS CAUGHT BY REAL PIPE:
+    // 1. OutboxService::markPublished was actually invoked by DispatchIngestedEvents
+    expect($simulatedOutbox->markPublishedCalls)->toBe(1);
+
+    // 2. Real DispatchIngestedEvents caught the exception, leaving outbox record pending in PostgreSQL
     $outboxRecord = DB::table('outbox_events')
         ->where('shop_id', $this->shopId)
         ->first();
@@ -83,9 +80,12 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
         ->and($outboxRecord->status)->toBe('pending')
         ->and($outboxRecord->dispatched_at)->toBeNull();
 
-    // 3. First consumer job executes (simulating queue worker processing the initial fast-path dispatch)
+    // 4. First consumer job executes (simulating worker processing the initial queue push)
     $firstJob = new AggregateProductDailyMetricsJob($this->shopId, $this->product->id, '2026-05-15');
     $firstJob->handle($this->timezoneService);
+
+    // Release unique job lock in queue fake simulating worker completing the first job
+    app('queue')->releaseUniqueJobLocks();
 
     $metricAfterFirstJob = DB::table('product_daily_metrics')
         ->where('shop_id', $this->shopId)
@@ -98,8 +98,11 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
         ->and($metricAfterFirstJob->gross_sales)->toBe('100.000000')
         ->and($metricAfterFirstJob->net_sales)->toBe('100.000000');
 
-    // 4. Recovery sweeper runs:
-    // Update created_at to 60s in the past to simulate time passing beyond the stranded threshold (30s)
+    // 5. Recovery sweeper runs:
+    // Allow markPublished to succeed for the sweeper
+    $simulatedOutbox->shouldCrashOnMarkPublished = false;
+
+    // Simulate time passing beyond stranded cutoff (30s)
     DB::table('outbox_events')
         ->where('id', $outboxRecord->id)
         ->update([
@@ -107,29 +110,24 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
             'updated_at' => CarbonImmutable::now()->subSeconds(60),
         ]);
 
-    $dispatchesBeforeSweeper = $totalDispatches;
-
     Artisan::call('outbox:publish', ['--age' => 30, '--limit' => 10]);
 
-    // VERIFY RECOVERY DISPATCH:
-    // Sweeper re-dispatches the exact same event a second time
-    $recoveryDispatches = $totalDispatches - $dispatchesBeforeSweeper;
-    expect($recoveryDispatches)->toBe(1);
-
-    // VERIFY TOTAL DISPATCH ATTEMPTS = 2 (At-least-once duplicate delivery guarantee)
-    expect($totalDispatches)->toBe(2);
+    // VERIFY SECOND QUEUE DISPATCH (Two distinct jobs pushed to the queue):
+    // Sweeper re-dispatched the event and the queue subsystem received its second job
+    \Illuminate\Support\Facades\Queue::assertPushed(AggregateProductDailyMetricsJob::class, 2);
+    expect($simulatedOutbox->markPublishedCalls)->toBe(2);
 
     // Outbox record is now published by the sweeper
     $outboxAfterSweeper = DB::table('outbox_events')->where('id', $outboxRecord->id)->first();
     expect($outboxAfterSweeper->status)->toBe('published')
         ->and($outboxAfterSweeper->dispatched_at)->not->toBeNull();
 
-    // 5. Second consumer job executes (simulating queue worker processing duplicate delivery from sweeper)
+    // 6. Second consumer job executes (simulating worker processing duplicate delivery from sweeper)
     $secondJob = new AggregateProductDailyMetricsJob($this->shopId, $this->product->id, '2026-05-15');
     $secondJob->handle($this->timezoneService);
 
     // VERIFY FINAL AGGREGATION IDEMPOTENCY:
-    // Re-aggregating over raw orders produces the exact same precomputed values; ZERO double-counting!
+    // Re-aggregating over raw orders produces identical metric totals; ZERO double-counting!
     $metricAfterDuplicateJob = DB::table('product_daily_metrics')
         ->where('shop_id', $this->shopId)
         ->where('product_id', $this->product->id)
