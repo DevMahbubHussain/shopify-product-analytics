@@ -18,7 +18,7 @@ final class OutboxService
      * Records a domain event inside the outbox table.
      * Can be invoked inside an active DB transaction to guarantee atomicity.
      */
-    public function record(string $shopId, object $event): string
+    public function record(string $shopId, object $event, int $eventVersion = 1): string
     {
         $id = (string) Str::uuid7();
         $eventClass = get_class($event);
@@ -28,6 +28,7 @@ final class OutboxService
             'id' => $id,
             'shop_id' => $shopId,
             'event_class' => $eventClass,
+            'event_version' => $eventVersion,
             'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
             'status' => 'pending',
             'dispatched_at' => null,
@@ -45,6 +46,7 @@ final class OutboxService
     {
         DB::table('outbox_events')
             ->where('id', $outboxId)
+            ->where('status', 'pending')
             ->update([
                 'status' => 'published',
                 'dispatched_at' => now(),
@@ -54,17 +56,26 @@ final class OutboxService
 
     /**
      * Retrieves stranded pending events that were not published within the expected cutoff.
+     * When $lock is true, acquires row locks using FOR UPDATE SKIP LOCKED for concurrent worker safety.
      *
      * @return Collection<int, object>
      */
-    public function getPendingStrandedEvents(DateTimeInterface $cutoff, int $limit = 100): Collection
-    {
-        return DB::table('outbox_events')
+    public function getPendingStrandedEvents(
+        DateTimeInterface $cutoff,
+        int $limit = 100,
+        bool $lock = false
+    ): Collection {
+        $query = DB::table('outbox_events')
             ->where('status', 'pending')
             ->where('created_at', '<=', $cutoff)
             ->orderBy('created_at', 'asc')
-            ->limit($limit)
-            ->get();
+            ->limit($limit);
+
+        if ($lock) {
+            $query->lock('FOR UPDATE SKIP LOCKED');
+        }
+
+        return $query->get();
     }
 
     /**
@@ -72,6 +83,11 @@ final class OutboxService
      */
     public function reconstitute(object $outboxRecord): object
     {
+        $version = (int) ($outboxRecord->event_version ?? 1);
+        if ($version !== 1) {
+            throw new InvalidArgumentException("Unsupported outbox event version: {$version}");
+        }
+
         $payload = is_string($outboxRecord->payload)
             ? json_decode($outboxRecord->payload, true, 512, JSON_THROW_ON_ERROR)
             : (array) $outboxRecord->payload;

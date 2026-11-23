@@ -69,7 +69,7 @@ final class UpsertRefundBatch
             );
 
             if ($written === []) {
-                return ['written_count' => 0, 'event' => null];
+                return ['written_count' => 0, 'event' => null, 'outbox_id' => null];
             }
 
             $postUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
@@ -77,13 +77,16 @@ final class UpsertRefundBatch
             $affectedOrderIds = array_values(array_unique(array_map(fn (RefundLineData $l): string => $orderIds[(string) $l->orderGid], $batch->lines)));
 
             $event = new RefundsIngested($shopId, $affectedOrderIds, $affectedBuckets);
-            $this->outboxService->record($shopId, $event);
+            $outboxId = $this->outboxService->record($shopId, $event);
 
-            return ['written_count' => count($written), 'event' => $event];
+            return ['written_count' => count($written), 'event' => $event, 'outbox_id' => $outboxId];
         }, 5);
 
         if ($result['event'] !== null) {
             $context->events[] = $result['event'];
+            if ($result['outbox_id'] !== null) {
+                $context->outboxIds[] = $result['outbox_id'];
+            }
         }
 
         $context->response = new BatchResult(count($batch->lines), $result['written_count']);

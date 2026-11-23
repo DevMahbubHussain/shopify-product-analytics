@@ -16,6 +16,9 @@ final class IngestionContext
     /** @var list<object> */
     public array $events = [];
 
+    /** @var list<string> */
+    public array $outboxIds = [];
+
     public function __construct(
         public readonly string $shopDomain,
         public readonly object $payload,

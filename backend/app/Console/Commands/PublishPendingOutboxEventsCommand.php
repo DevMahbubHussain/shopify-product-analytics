@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Ingestion\Services\OutboxService;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final class PublishPendingOutboxEventsCommand extends Command
@@ -29,25 +30,34 @@ final class PublishPendingOutboxEventsCommand extends Command
         $limit = max(1, (int) $this->option('limit'));
         $cutoff = CarbonImmutable::now()->subSeconds($age);
 
-        $pending = $outboxService->getPendingStrandedEvents($cutoff, $limit);
+        $publishedCount = 0;
+        $found = false;
 
-        if ($pending->isEmpty()) {
+        DB::transaction(function () use ($outboxService, $cutoff, $limit, &$publishedCount, &$found): void {
+            $pending = $outboxService->getPendingStrandedEvents($cutoff, $limit, lock: true);
+
+            if ($pending->isEmpty()) {
+                return;
+            }
+
+            $found = true;
+
+            foreach ($pending as $record) {
+                try {
+                    $event = $outboxService->reconstitute($record);
+                    event($event);
+                    $outboxService->markPublished($record->id);
+                    $publishedCount++;
+                } catch (Throwable $e) {
+                    $this->error("Failed to publish outbox event [{$record->id}]: {$e->getMessage()}");
+                }
+            }
+        }, 5);
+
+        if (! $found) {
             $this->info('No stranded outbox events found.');
 
             return self::SUCCESS;
-        }
-
-        $publishedCount = 0;
-
-        foreach ($pending as $record) {
-            try {
-                $event = $outboxService->reconstitute($record);
-                event($event);
-                $outboxService->markPublished($record->id);
-                $publishedCount++;
-            } catch (Throwable $e) {
-                $this->error("Failed to publish outbox event [{$record->id}]: {$e->getMessage()}");
-            }
         }
 
         $this->info("Published {$publishedCount} stranded outbox events.");

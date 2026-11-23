@@ -16,6 +16,7 @@ use App\Ingestion\Responses\BatchResult;
 use App\Ingestion\Services\OutboxService;
 use App\Ingestion\TenantIdLookup;
 use App\Support\ShopifyGid;
+use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Support\Facades\DB;
 
@@ -37,8 +38,9 @@ final class UpsertOrderBatch
 
         $incomingGids = array_map(fn (OrderData $o): string => (string) $o->gid, $batch->orders);
         $preUpsertBuckets = $this->captureBucketsByOrderGids($shopId, $incomingGids, $timezone);
+        $preExistingTimestamps = $this->captureOrderTimestampsByGids($shopId, $incomingGids);
 
-        $result = DB::transaction(function () use ($batch, $shopId, $timezone, $preUpsertBuckets): array {
+        $result = DB::transaction(function () use ($batch, $shopId, $timezone, $preUpsertBuckets, $preExistingTimestamps): array {
             $orderIds = ($this->upsert)(
                 'orders',
                 array_map(fn (OrderData $o): array => $this->orderRow($shopId, $o), $batch->orders),
@@ -48,6 +50,8 @@ final class UpsertOrderBatch
             );
 
             $writtenOrders = array_values(array_filter($batch->orders, fn (OrderData $o): bool => isset($orderIds[(string) $o->gid])));
+
+            $this->pruneRemovedLineItems($shopId, $writtenOrders, $orderIds, $preExistingTimestamps);
 
             ($this->upsert)(
                 'order_line_items',
@@ -59,20 +63,23 @@ final class UpsertOrderBatch
             $writtenIds = array_values(array_map(fn (OrderData $o): string => $orderIds[(string) $o->gid], $writtenOrders));
 
             if ($writtenIds === []) {
-                return ['order_ids' => [], 'event' => null];
+                return ['order_ids' => [], 'event' => null, 'outbox_id' => null];
             }
 
             $postUpsertBuckets = $this->captureBucketsByOrderIds($shopId, $writtenIds, $timezone);
             $affectedBuckets = $this->mergeBuckets($preUpsertBuckets, $postUpsertBuckets);
 
             $event = new OrdersIngested($shopId, $writtenIds, $affectedBuckets);
-            $this->outboxService->record($shopId, $event);
+            $outboxId = $this->outboxService->record($shopId, $event);
 
-            return ['order_ids' => $writtenIds, 'event' => $event];
+            return ['order_ids' => $writtenIds, 'event' => $event, 'outbox_id' => $outboxId];
         }, 5);
 
         if ($result['event'] !== null) {
             $context->events[] = $result['event'];
+            if ($result['outbox_id'] !== null) {
+                $context->outboxIds[] = $result['outbox_id'];
+            }
         }
 
         $context->response = new BatchResult(count($batch->orders), count($result['order_ids']));
@@ -127,6 +134,68 @@ final class UpsertOrderBatch
         }
 
         return $rows;
+    }
+
+    /**
+     * @param list<OrderData> $writtenOrders
+     * @param array<string, string> $orderIds
+     * @param array<string, ?CarbonImmutable> $preExistingOrderTimestamps
+     */
+    private function pruneRemovedLineItems(
+        string $shopId,
+        array $writtenOrders,
+        array $orderIds,
+        array $preExistingOrderTimestamps
+    ): void {
+        $updatedOrderIds = [];
+        $incomingLineGids = [];
+
+        foreach ($writtenOrders as $order) {
+            $gid = (string) $order->gid;
+            $existingTimestamp = $preExistingOrderTimestamps[$gid] ?? null;
+
+            if ($existingTimestamp !== null && $order->shopifyUpdatedAt->greaterThan($existingTimestamp)) {
+                $orderId = $orderIds[$gid] ?? null;
+                if ($orderId !== null) {
+                    $updatedOrderIds[] = $orderId;
+                    foreach ($order->lineItems as $line) {
+                        $incomingLineGids[] = (string) $line->gid;
+                    }
+                }
+            }
+        }
+
+        if ($updatedOrderIds === []) {
+            return;
+        }
+
+        $query = DB::table('order_line_items')
+            ->where('shop_id', $shopId)
+            ->whereIn('order_id', $updatedOrderIds);
+
+        if ($incomingLineGids !== []) {
+            $query->whereNotIn('shopify_line_item_gid', $incomingLineGids);
+        }
+
+        $query->delete();
+    }
+
+    /**
+     * @param list<string> $orderGids
+     * @return array<string, ?CarbonImmutable>
+     */
+    private function captureOrderTimestampsByGids(string $shopId, array $orderGids): array
+    {
+        if ($orderGids === []) {
+            return [];
+        }
+
+        return DB::table('orders')
+            ->where('shop_id', $shopId)
+            ->whereIn('shopify_order_gid', $orderGids)
+            ->pluck('shopify_updated_at', 'shopify_order_gid')
+            ->map(fn ($ts): ?CarbonImmutable => $ts !== null ? CarbonImmutable::parse($ts) : null)
+            ->all();
     }
 
     /**

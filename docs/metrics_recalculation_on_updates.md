@@ -9,6 +9,8 @@ Specification and architecture of the state-change recalculation engine for `sho
 - **Elimination of Stale/Phantom Revenue:** Prevents orders or refunds that moved dates from remaining in old daily metrics buckets.
 - **Double-Counting Prevention:** Eliminates situations where an order updated from Day $A$ to Day $B$ is counted on both days.
 - **Line Item Swap Tracking:** Recalculates both the original product (removing its sales) and the new product (adding its sales) when a merchant edits an order in Shopify Admin.
+- **Removed Line Item Pruning:** When an order is edited in Shopify and a line item is removed, the removed line item is deleted from `order_line_items` so orphaned records do not produce phantom revenue.
+- **Slice Accumulation Safe:** Preserves harvester multi-chunk ingestion for oversized orders (> 250 lines) by pruning only when an incoming payload represents a strictly newer update (`shopify_updated_at > existing_timestamp`).
 - **Pre- and Post-Upsert State Capture:** Captures `(product_id, metric_date)` pairs immediately before PostgreSQL write transactions, and captures updated pairs immediately after.
 - **Unified Asynchronous Dispatch:** Passes the deduplicated set union of all affected buckets directly through domain events (`OrdersIngested`, `RefundsIngested`), dispatching `AggregateProductDailyMetricsJob` for every affected date.
 - **Full Backward Compatibility:** If an event is dispatched without explicit affected buckets, listeners fall back to querying the database directly.
@@ -28,11 +30,14 @@ Laravel Ingestion Pipeline:
   ├── 1. ResolveShopTenant
   ├── 2. UpsertOrderBatch / UpsertRefundBatch
   │       ├── A. Pre-Upsert Capture:
-  │       │      Query existing (product_id, processed_at) in DB for incoming GIDs
+  │       │      Query existing (product_id, processed_at) and shopify_updated_at in DB
   │       │      Convert to pre-update buckets: [ (Product 1, 2026-05-15) ]
   │       │
-  │       ├── B. DB::transaction Upsert:
-  │       │      Write new orders / order_line_items / refund_line_items
+  │       ├── B. DB::transaction Upsert & Pruning:
+  │       │      1. Upsert orders with freshness check
+  │       │      2. If incoming.shopify_updated_at > existing.shopify_updated_at:
+  │       │         Prune removed line items from order_line_items in single query
+  │       │      3. Upsert incoming line items into order_line_items
   │       │
   │       ├── C. Post-Upsert Capture:
   │       │      Query newly written (product_id, processed_at) in DB
@@ -89,6 +94,20 @@ Queued Event Listener: QueueMetricAggregationsFromOrders / Refunds
    - May 15 refund resets to `0.000000`, restoring net sales.
    - May 20 receives the `$50.000000` refund.
 
+### Scenario D: Order Edit (Line Item Removed)
+1. **Initial Order:** Order #101 on `2026-05-15` contains Product 1 ($40.00) and Product 2 ($60.00). Both products reflect sales in `product_daily_metrics`.
+2. **Merchant Edit:** Merchant removes Product 2 from the order in Shopify Admin. Shopify updates `updated_at`.
+3. **Ingestion Pipeline:**
+   - **Pre-upsert:** Captures `(Product 1, 2026-05-15)` and `(Product 2, 2026-05-15)`.
+   - **Pruning:** Identifies `shopify_updated_at > existing_timestamp`. Atomically deletes Product 2's line item from `order_line_items`.
+   - **Upsert:** Updates Product 1's line item.
+   - **Post-upsert:** Captures `(Product 1, 2026-05-15)`.
+   - **Union:** `[(Product 1, 2026-05-15), (Product 2, 2026-05-15)]`.
+4. **Execution:**
+   - Job for Product 2 runs: Queries `order_line_items`, finds 0 remaining lines, and resets `product_daily_metrics` to `0.000000` gross sales, net sales, and 0 units.
+   - Job for Product 1 runs: Retains `$40.000000` gross sales.
+   - Zero stale or ghost metrics remain for the removed line item.
+
 ---
 
 ## 4. File-by-File Breakdown
@@ -101,6 +120,8 @@ Queued Event Listener: QueueMetricAggregationsFromOrders / Refunds
 - **Dependencies:** Injects `StoreTimezoneService $timezoneService`.
 - **Methods:**
   - `captureBucketsByOrderGids()`: Inspects DB before the write transaction.
+  - `captureOrderTimestampsByGids()`: Queries pre-existing `shopify_updated_at` timestamps for orders in the batch.
+  - `pruneRemovedLineItems()`: For orders where `shopify_updated_at > existing_timestamp`, deletes any line items in `order_line_items` omitted from the payload in a single bulk query ($O(1)$ complexity). Preserves multi-slice accumulation for oversized orders (> 250 lines) where timestamps are identical.
   - `captureBucketsByOrderIds()`: Inspects DB after the write transaction.
   - `formatBuckets()`: Uses `StoreTimezoneService::toStoreDate()` to normalize timestamps into store dates.
   - `mergeBuckets()`: Deduplicates keys on `"{$productId}:{$metricDate}"`.
@@ -129,6 +150,8 @@ Queued Event Listener: QueueMetricAggregationsFromOrders / Refunds
 |---|---|---|---|
 | **Order Rescheduled / Moved** | Order `processed_at` moves from `2026-05-15` to `2026-05-20` | Jobs dispatched for both dates; May 15 gross sales resets to `0.000000`, May 20 receives sales | Verified via `OrderDateRecalculationTest` |
 | **Order Line Item Swapped** | Line item changes from Product 1 to Product 2 | Jobs dispatched for both products; Product 1 sales drop to `0.000000`, Product 2 sales set | Verified via `OrderDateRecalculationTest` |
+| **Order Line Item Removed** | Order updated with a line item omitted | Line item deleted from `order_line_items`; aggregation job dispatched for removed product; daily metrics reset to `0.000000` | Verified via `OrderLineItemRemovalRecalculationTest` |
+| **Oversized Order Slices** | 600-line order synced in slices of 250 lines with same header | Slices share `shopify_updated_at`; pruning skipped; all 600 lines accumulate safely | Verified via `OrderIngestionTest` |
 | **Refund Date Shift** | Refund `processed_at` moves from `2026-05-15` to `2026-05-20` | Jobs dispatched for both dates; May 15 refund resets to `0.000000`, May 20 receives refund | Verified via `RefundDateRecalculationTest` |
 | **Refund Item Reassociation** | Refund line item reassociated from Product 1 to Product 2 | Jobs dispatched for both products; Product 1 refund resets to `0.000000`, Product 2 receives refund | Verified via `RefundDateRecalculationTest` |
 | **Fresh Ingestion (No Prior State)** | Brand new order with no pre-existing rows in DB | Pre-upsert returns empty; post-upsert captures new date; dispatches only new date | Verified via `OrderIngestionTest` |
@@ -141,7 +164,7 @@ docker compose exec backend ./vendor/bin/pest
 ```
 **Outcome:**
 ```
-Tests: 265 passed (3000 assertions)
-Duration: 5.32s
+Tests: 285 passed (3149 assertions)
+Duration: 6.30s
 ```
 Zero test failures, zero query warnings, zero memory leaks, and sub-50ms execution across all analytical queries.
