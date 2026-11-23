@@ -23,7 +23,35 @@ beforeEach(function (): void {
 });
 
 it('proves idempotent metric convergence when fast-path dispatches but crashes before markPublished', function (): void {
-    // 1. Ingest an order
+    // Track total dispatches across the entire test lifecycle
+    $totalDispatches = 0;
+    Event::listen(OrdersIngested::class, function () use (&$totalDispatches): void {
+        $totalDispatches++;
+    });
+
+    // 1. Bind crash-simulating pipe: event() dispatches successfully to Redis,
+    // but the process terminates or DB connection drops before markPublished() executes.
+    $this->app->bind(\App\Ingestion\Pipes\DispatchIngestedEvents::class, function () {
+        return new class {
+            public function handle(\App\Ingestion\IngestionContext $context, \Closure $next): \App\Ingestion\IngestionResponse
+            {
+                // Fast-path dispatch succeeds
+                foreach ($context->events as $event) {
+                    event($event);
+                }
+
+                // CRASH WINDOW: Process dies / markPublished() fails, leaving outbox record pending
+                // Log warning as fast-path error handler does
+                \Illuminate\Support\Facades\Log::warning('Simulated fast-path process crash before markPublished execution', [
+                    'outbox_ids' => $context->outboxIds,
+                ]);
+
+                return $next($context);
+            }
+        };
+    });
+
+    // 2. Ingest an order through HTTP endpoint
     $orderData = orderPayload(1, [
         'processed_at' => '2026-05-15T12:00:00Z',
         'shopify_updated_at' => '2026-05-15T12:00:00Z',
@@ -40,27 +68,22 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
         ->assertOk()
         ->assertExactJson(['received' => 1, 'written' => 1, 'skipped_stale' => 0]);
 
-    // Find the outbox event that was created
+    // VERIFY INITIAL DISPATCH:
+    // event($event) succeeded and was dispatched to Redis queue (count = 1)
+    expect($totalDispatches)->toBe(1);
+
+    // VERIFY PUBLISHED STATUS UPDATE FAILED:
+    // Because of the crash, markPublished() was not executed, so the outbox record
+    // genuinely remained in 'pending' status with dispatched_at = null
     $outboxRecord = DB::table('outbox_events')
         ->where('shop_id', $this->shopId)
         ->first();
 
-    expect($outboxRecord)->not->toBeNull();
+    expect($outboxRecord)->not->toBeNull()
+        ->and($outboxRecord->status)->toBe('pending')
+        ->and($outboxRecord->dispatched_at)->toBeNull();
 
-    // 2. SIMULATE THE EXACT CRASH WINDOW:
-    // event($event) succeeded and was pushed to Redis, but the process crashed before
-    // $outboxService->markPublished() could be executed/committed in PostgreSQL.
-    // We simulate this by reverting status back to 'pending' with created_at 60s in the past.
-    DB::table('outbox_events')
-        ->where('id', $outboxRecord->id)
-        ->update([
-            'status' => 'pending',
-            'dispatched_at' => null,
-            'created_at' => CarbonImmutable::now()->subSeconds(60),
-            'updated_at' => CarbonImmutable::now()->subSeconds(60),
-        ]);
-
-    // 3. Queue worker processes the FIRST dispatched job
+    // 3. First consumer job executes (simulating queue worker processing the initial fast-path dispatch)
     $firstJob = new AggregateProductDailyMetricsJob($this->shopId, $this->product->id, '2026-05-15');
     $firstJob->handle($this->timezoneService);
 
@@ -75,35 +98,44 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
         ->and($metricAfterFirstJob->gross_sales)->toBe('100.000000')
         ->and($metricAfterFirstJob->net_sales)->toBe('100.000000');
 
-    // 4. RECOVERY SWEEPER RUNS:
-    // Because the crash left the outbox record as 'pending', the sweeper picks it up
-    // and re-dispatches the exact same event a SECOND time to Redis.
-    $redisDispatches = 0;
-    Event::listen(OrdersIngested::class, function () use (&$redisDispatches): void {
-        $redisDispatches++;
-    });
+    // 4. Recovery sweeper runs:
+    // Update created_at to 60s in the past to simulate time passing beyond the stranded threshold (30s)
+    DB::table('outbox_events')
+        ->where('id', $outboxRecord->id)
+        ->update([
+            'created_at' => CarbonImmutable::now()->subSeconds(60),
+            'updated_at' => CarbonImmutable::now()->subSeconds(60),
+        ]);
+
+    $dispatchesBeforeSweeper = $totalDispatches;
 
     Artisan::call('outbox:publish', ['--age' => 30, '--limit' => 10]);
 
-    // Verify the sweeper re-dispatched the event and marked it published
-    expect($redisDispatches)->toBe(1);
+    // VERIFY RECOVERY DISPATCH:
+    // Sweeper re-dispatches the exact same event a second time
+    $recoveryDispatches = $totalDispatches - $dispatchesBeforeSweeper;
+    expect($recoveryDispatches)->toBe(1);
 
+    // VERIFY TOTAL DISPATCH ATTEMPTS = 2 (At-least-once duplicate delivery guarantee)
+    expect($totalDispatches)->toBe(2);
+
+    // Outbox record is now published by the sweeper
     $outboxAfterSweeper = DB::table('outbox_events')->where('id', $outboxRecord->id)->first();
     expect($outboxAfterSweeper->status)->toBe('published')
         ->and($outboxAfterSweeper->dispatched_at)->not->toBeNull();
 
-    // 5. Queue worker processes the SECOND duplicate job from the sweeper
+    // 5. Second consumer job executes (simulating queue worker processing duplicate delivery from sweeper)
     $secondJob = new AggregateProductDailyMetricsJob($this->shopId, $this->product->id, '2026-05-15');
     $secondJob->handle($this->timezoneService);
 
+    // VERIFY FINAL AGGREGATION IDEMPOTENCY:
+    // Re-aggregating over raw orders produces the exact same precomputed values; ZERO double-counting!
     $metricAfterDuplicateJob = DB::table('product_daily_metrics')
         ->where('shop_id', $this->shopId)
         ->where('product_id', $this->product->id)
         ->where('metric_date', '2026-05-15')
         ->first();
 
-    // VERIFIED: Dual-dispatch replay results in ZERO double-counting!
-    // Metrics remain exactly 2 units, 1 order, $100.000000 gross/net sales.
     expect((int) $metricAfterDuplicateJob->units_sold)->toBe(2)
         ->and((int) $metricAfterDuplicateJob->order_count)->toBe(1)
         ->and($metricAfterDuplicateJob->gross_sales)->toBe('100.000000')
@@ -172,12 +204,17 @@ it('proves recovery replay safety when sweeper dispatches but crashes before mar
         ],
     ]));
 
+    expect($eventDispatchedCount)->toBe(1);
+
     // Worker 1 runs
     $job1 = new AggregateProductDailyMetricsJob($this->shopId, $this->product->id, '2026-05-15');
     $job1->handle($this->timezoneService);
 
     // Sweeper cycle 2 (recovering from previous crash, now completes cleanly with markPublished)
     Artisan::call('outbox:publish', ['--age' => 30, '--limit' => 10]);
+
+    // Sweeper re-dispatched the event a second time (total 2 dispatches)
+    expect($eventDispatchedCount)->toBe(2);
 
     // Record is now marked published
     $outboxFinal = DB::table('outbox_events')->where('id', $outboxId)->first();

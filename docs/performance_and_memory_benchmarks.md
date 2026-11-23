@@ -10,7 +10,7 @@ All performance and memory benchmarks were executed directly inside the local Do
 
 | Benchmark Test Scenario | Target Threshold | Measured Result | Status |
 |---|---|---|---|
-| **Max Batch Ingestion (50 orders, 250 line items)** | Latency < 1,500ms<br>Memory Delta < 10.0 MB<br>Deterministic Row Locking (`lockForUpdate`)<br>Query Count: Exactly 11 | **Latency: ~140ms**<br>**Memory Delta: ~2.1 MB**<br>**Row Locks: Deterministic GID ASC**<br>**Query Count: Exactly 11 queries** | **PASSED** (Exceeded) |
+| **Max Batch Ingestion (50 orders, 250 line items)** | Latency < 1,500ms<br>Memory Delta < 10.0 MB<br>Deterministic Row Locking (`lockForUpdate`)<br>Query Count: Exactly 12 | **Latency: ~140ms**<br>**Memory Delta: ~2.1 MB**<br>**Row Locks: Deterministic GID ASC**<br>**Query Count: Exactly 12 queries** | **PASSED** (Exceeded) |
 | **Metric Aggregation (1,000 line items)** | Latency < 150ms<br>Engine Retained Delta < 1.0 MB<br>OS Memory Delta < 4.0 MB | **Latency: ~65ms**<br>**Engine Delta: < 0.2 MB**<br>**OS Delta: < 1.0 MB** | **PASSED** (Sub-100ms) |
 | **Metric Aggregation (10,000 line items)** | Latency < 1,500ms<br>Engine Retained Delta < 1.5 MB<br>OS Memory Delta < 6.0 MB | **Latency: ~620ms**<br>**Engine Delta: ~0.8 MB**<br>**OS Delta: ~4.0 MB** | **PASSED** (Linear scaling) |
 | **High-Volume Aggregation (50,000 line items)** | Latency < 10,000ms<br>Throughput > 5,000 items/s<br>Peak Allocated Memory < 128 MB<br>Engine Retained Delta < 2.0 MB | **Latency: ~2,000ms**<br>**Throughput: ~25,000 items/s**<br>**Peak Memory: ~82.5 MB**<br>**Engine Delta: < 1.0 MB** | **PASSED** (Zero leak) |
@@ -53,18 +53,19 @@ All performance and memory benchmarks were executed directly inside the local Do
   - **Latency:** **140 milliseconds**.
   - **Memory Delta:** **2.1 MB** consumed by the request payload and DTO collections.
   - **Deterministic Concurrency Guard:** Parent order row locks acquired via `ORDER BY shopify_order_gid ASC lockForUpdate()`, completely eliminating race conditions and deadlocks under concurrent order/refund updates.
-  - **Exact Query Audit (11 queries):**
+  - **Exact Query Audit (12 queries):**
     1. Lookup shop by domain
-    2. Lookup order timestamps by GIDs
-    3. Acquire deterministic row locks on existing orders (`lockForUpdate`)
-    4. Upsert orders batch (25 rows)
-    5. Lookup products by GIDs
-    6. Lookup product variants by GIDs
-    7. Delete pruned line items (batch bulk)
-    8. Upsert order_line_items batch (250 rows)
-    9. Capture post-upsert buckets by order IDs
-    10. Insert outbox_events record (`status = 'pending'`)
-    11. Update outbox_events record to published (`WHERE id = ? AND status = 'pending'`)
+    2. Lock existing orders (`lockForUpdate`)
+    3. Capture pre-upsert buckets by order GIDs
+    4. Lookup order timestamps by GIDs
+    5. Upsert orders batch (25 rows)
+    6. Lookup products by GIDs
+    7. Lookup product variants by GIDs
+    8. Delete pruned line items (batch bulk)
+    9. Upsert order_line_items batch (250 rows)
+    10. Capture post-upsert buckets by order IDs
+    11. Insert outbox_events record (`status = 'pending'`)
+    12. Update outbox_events record to published (`WHERE id = ? AND status = 'pending'`)
 
 ### Benchmark 2: Metric Aggregation Across 1k, 10k, and 50k Scales
 - **Scenario:** Running `AggregateProductDailyMetricsJob` over synthetic datasets generated via PostgreSQL `generate_series`, measuring latency, throughput, peak memory, and Zend Engine memory retention.
