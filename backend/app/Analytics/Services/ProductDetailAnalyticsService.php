@@ -160,7 +160,7 @@ final readonly class ProductDetailAnalyticsService
             ->get(['id', 'shopify_variant_gid', 'title', 'sku', 'price']);
 
         $startUtc = $this->timezoneService->startOfDayUtc($from, $shop->timezone);
-        $endUtc = $this->timezoneService->endOfDayUtc($to, $shop->timezone);
+        $nextDayUtc = $this->timezoneService->startOfNextDayUtc($to, $shop->timezone);
 
         $orderLines = DB::table('order_line_items')
             ->join('orders', function ($join): void {
@@ -170,7 +170,7 @@ final readonly class ProductDetailAnalyticsService
             ->where('order_line_items.shop_id', $shop->id)
             ->where('order_line_items.product_id', $productId)
             ->where('orders.processed_at', '>=', $startUtc)
-            ->where('orders.processed_at', '<=', $endUtc)
+            ->where('orders.processed_at', '<', $nextDayUtc)
             ->select([
                 'order_line_items.variant_id',
                 'order_line_items.quantity',
@@ -188,7 +188,7 @@ final readonly class ProductDetailAnalyticsService
             ->where('refund_line_items.shop_id', $shop->id)
             ->where('order_line_items.product_id', $productId)
             ->where('refund_line_items.processed_at', '>=', $startUtc)
-            ->where('refund_line_items.processed_at', '<=', $endUtc)
+            ->where('refund_line_items.processed_at', '<', $nextDayUtc)
             ->select([
                 'order_line_items.variant_id',
                 'refund_line_items.refunded_quantity',

@@ -26,7 +26,25 @@ final class QueueMetricAggregationsFromRefunds implements ShouldQueue
 
     public function handle(RefundsIngested $event): void
     {
-        if (empty($event->orderIds)) {
+        if (empty($event->orderIds) && empty($event->affectedBuckets)) {
+            return;
+        }
+
+        if (! empty($event->affectedBuckets)) {
+            $dispatched = [];
+            foreach ($event->affectedBuckets as $bucket) {
+                $productId = (string) $bucket['product_id'];
+                $metricDate = (string) $bucket['metric_date'];
+                $key = "{$productId}:{$metricDate}";
+
+                if (isset($dispatched[$key])) {
+                    continue;
+                }
+
+                $dispatched[$key] = true;
+                AggregateProductDailyMetricsJob::dispatch($event->shopId, $productId, $metricDate);
+            }
+
             return;
         }
 

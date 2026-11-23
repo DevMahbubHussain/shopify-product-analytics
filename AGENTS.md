@@ -36,6 +36,8 @@ When writing or changing code in any phase:
 - **Tenant Isolation:** Every database query, queue job, and analytics request must be scoped strictly by `shop_id`.
 - **Financial Precision:** All monetary amounts must be stored as `DECIMAL(20,6)` or integer minor units (cents). Floating-point arithmetic (`float`, `double`) is strictly forbidden for money.
 - **Currency Isolation:** Always store amounts with their ISO 4217 currency code. Never sum amounts across different currencies.
+- **Timestamp Precision & Half-Open Day Boundaries:** Timestamps (`processed_at`, `refunded_at`) must be stored in PostgreSQL with microsecond precision (`timestamptz(6)`). All daily metric aggregations and analytics queries MUST use half-open intervals $[startOfDayUtc, startOfNextDayUtc)$ (`>= startOfDayUtc` and `< startOfNextDayUtc`). Closed intervals (`<= endOfDay`) or `23:59:59` are strictly prohibited to prevent data loss or double-counting at boundary microseconds.
+- **Update Recalculation Buckets:** When orders or refunds are updated, edited, or cancelled, pre-update and post-update state must be captured. Ingestion pipelines must dispatch recalculation jobs for both the previous `(product_id, metric_date)` and the updated `(product_id, metric_date)` buckets so daily aggregate tables are never stale.
 - **Protected Customer Data (PCD):** Strictly avoid collecting or storing customer personal data (names, email addresses, phone numbers, shipping addresses) in the database.
 - **Webhook Idempotency:** Webhook handlers must verify `X-Shopify-Hmac-Sha256`, deduplicate deliveries using the Shopify webhook ID against `webhook_events`, respond with `200 OK` within 2 seconds, and delegate processing to background queues.
 
@@ -64,8 +66,8 @@ The Laravel backend must strictly implement the recurring cross-cutting patterns
    - Multi-step ingestion pipelines (`POST /internal/v1/ingestion/*`) must use `Illuminate\Pipeline\Pipeline` using discrete, testable pipe classes rather than monolithic controller actions or god-services.
    - Example pipeline stages: `[VerifyHmacSignature::class, ResolveShopTenant::class, DeduplicatePayload::class, UpsertNormalizedBatch::class, DispatchMetricAggregation::class]`.
 2. **Atomic Locks & Concurrency Control (Strict Redis Primitives):**
-   - Aggregation jobs updating `product_daily_metrics` must implement `ShouldBeUnique` (dispatch guard) using unique keys `(shop_id:product_id:metric_date)` to prevent duplicate jobs entering queue buffers.
-   - Concurrent worker execution must be guarded with `WithoutOverlapping($this->lockKey())->expireAfter(60)`.
+   - Aggregation jobs updating `product_daily_metrics` must implement `ShouldBeUniqueUntilProcessing` (dispatch guard) using unique keys `(shop_id:product_id:metric_date)` to prevent duplicate jobs entering queue buffers while allowing fresh jobs to queue if an update arrives during execution.
+   - Concurrent worker execution must be guarded with `WithoutOverlapping($this->lockKey())->releaseAfter(10)->expireAfter(120)`. The lock expiration (120s) must strictly exceed the queue worker execution timeout (90s) so locks cannot expire prematurely while a worker is still writing, and `releaseAfter(10)` provides exponential backoff under worker contention.
    - **Strict Lock Caveat:** Distributed atomic locks MUST run exclusively against the Redis cache driver (`Cache::store('redis')->lock(...)`). Never use database or file drivers for concurrency locks as they lack atomic `SETNX` and Lua script execution.
 3. **The Retry Pattern & Deadlock Resilience:**
    - Database operations involving batch upserts or aggregations must be wrapped in `DB::transaction(fn() => ..., 5)` to automatically recover from PostgreSQL deadlocks.
@@ -85,6 +87,11 @@ The Laravel backend must strictly implement the recurring cross-cutting patterns
 7. **Pragmatic Driver Pattern (Avoid Premature Abstraction):**
    - Do not invent custom managers or driver abstractions for components with a single concrete implementation.
    - Rely on Laravel's core managers (`Storage`, `Queue`, `Cache`). Apply the Driver pattern (`Illuminate\Support\Manager`) only where multiple interchangeable drivers genuinely exist (e.g. `ExportManager` with `CsvExportDriver`).
+8. **The Transactional Outbox Pattern (Zero Event Loss):**
+   - Ingestion pipelines (`POST /internal/v1/ingestion/*`) and any process triggering asynchronous side-effects must atomically persist domain events to the `outbox_events` table inside the exact same `DB::transaction(fn() => ..., 5)` as the database upsert.
+   - A dual-path delivery model guarantees zero event loss:
+     1. *Fast-Path:* The HTTP pipeline immediately dispatches the domain event to Redis and marks the outbox event as `PUBLISHED`.
+     2. *Recovery Sweeper:* If Redis is temporarily unavailable or a worker/process terminates abruptly after commit, the scheduled background command `php artisan outbox:publish --age=30 --limit=100` queries pending records older than 30 seconds and republishes them to Redis.
 
 ### C10. Pragmatic Simplicity & Clean Code Standards (No Over-Engineering)
 - **No Over-Engineering or Speculative Abstraction:** Write straightforward, expressive, and developer-friendly code. Never introduce complex design patterns, multi-tier abstractions, or generic wrappers when a direct, readable implementation satisfies the task. Follow YAGNI (You Aren't Gonna Need It) and KISS (Keep It Simple, Stupid).
@@ -150,6 +157,13 @@ The project owner must understand and control every line that enters the codebas
 
 This rule overrides any instruction to "go", "continue", or "implement the feature": those approve the next single step only.
 
+### C16. Mandatory Large Dataset Load & Memory Benchmarks on Feature Completion
+Whenever any feature, ingestion pipeline, background queue job, or analytics REST endpoint is developed, modified, or completed, it MUST be subjected to automated load and memory benchmarks before being considered complete:
+1. **Max Boundary Batch Ingestion:** Ingest maximum supported batch limits (e.g., 50 orders / 250 line items per S2S payload) and verify sub-second completion without transaction rollbacks, deadlocks, or lock contention.
+2. **High-Volume Aggregation & PostgreSQL Index Scans:** Aggregate metrics over large datasets (1,000+ line items) and verify via query logging / `EXPLAIN ANALYZE` that PostgreSQL executes composite index scans (e.g., `orders_shop_processed_idx`, `line_items_order_tenant_fk`) sub-100ms with zero full-table scans.
+3. **Long-Range Historical Querying & Constant Complexity ($O(1)$ Queries):** Verify that wide-window dashboard queries (e.g., 365 days of historical data) execute sub-50ms with a constant query count ($O(1)$ queries) and zero N+1 database queries.
+4. **Memory Leak Resistance & Flat Footprint:** Benchmark sequential batch executions to confirm memory stability delta (< 1MB) and ensure streaming/lazy iteration (`lazy()`, `cursor()`, chunking) prevents memory exhaustion under long-running queue worker or CLI execution.
+
 ---
 
 ## 2. Environment & Commands Reference
@@ -173,6 +187,7 @@ docker compose exec backend php artisan migrate              # Run database migr
 docker compose exec backend ./vendor/bin/pest                # Run Pest test suite (Unit, Feature, Contract)
 docker compose exec backend ./vendor/bin/pest --filter=Name  # Run targeted test
 docker compose exec backend php artisan queue:work redis     # Run queue worker manually
+docker compose exec backend php artisan outbox:publish       # Sweeper: publish pending outbox events (default: --age=30 --limit=100)
 
 # Shopify App (runs on the host; Node >= 22.12)
 cd shopify-app
@@ -300,8 +315,8 @@ flowchart TD
 - Ensure webhook verification via `X-Shopify-Hmac-Sha256` before forwarding to Laravel.
 
 ### Step 4: Analytics Engine & Aggregation Pipeline
-- Create background aggregation jobs dispatched to Redis queues upon order/refund ingestion, protected by **Redis Atomic Locks** (`ShouldBeUnique` dispatch guard and `WithoutOverlapping` worker execution guard).
-- Implement store-timezone conversion: timestamps stored in UTC must map accurately to store-local `metric_date`.
+- Create background aggregation jobs dispatched to Redis queues upon order/refund ingestion, protected by **Redis Atomic Locks** (`ShouldBeUniqueUntilProcessing` dispatch guard and `WithoutOverlapping(releaseAfter: 10, expireAfter: 120)` worker execution guard).
+- Implement store-timezone conversion: timestamps stored in UTC (`timestamptz(6)`) must map accurately to store-local `metric_date` using half-open intervals $[startOfDayUtc, startOfNextDayUtc)$.
 - Enforce strict analytics formulas:
   - Gross Sales = $\sum (\text{Quantity} \times \text{Original Unit Price})$
   - Net Sales = $\text{Gross Sales} - \text{Discounts} - \text{Refunds}$
@@ -354,3 +369,6 @@ flowchart TD
 | **Dashboard Querying** | Always query precomputed `product_daily_metrics`; never query raw order lines live |
 | **Webhook Response** | Immediate `200 OK` after HMAC validation; heavy tasks queued in Redis |
 | **Timezone Boundary** | Store timestamps in UTC; convert to store timezone before daily bucketing |
+| **Transactional Outbox** | Ingestion pipeline writes to `outbox_events` inside `DB::transaction`; dual-path fast-path + sweeper |
+| **Half-Open Day Boundary** | `[startOfDayUtc, startOfNextDayUtc)` with `timestamptz(6)` microsecond precision; never `<= endOfDay` |
+| **Concurrency Lock Hierarchy** | `ShouldBeUniqueUntilProcessing` + `WithoutOverlapping(releaseAfter: 10, expireAfter: 120)` > 90s worker timeout |

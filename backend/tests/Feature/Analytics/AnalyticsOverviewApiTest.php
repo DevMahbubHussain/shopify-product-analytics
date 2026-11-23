@@ -242,3 +242,53 @@ it('requires a valid S2S signature', function () {
         'HTTP_ACCEPT' => 'application/json',
     ])->assertUnauthorized();
 });
+
+it('accurately counts orders placed at fractional subsecond boundary timestamps in period comparisons', function () {
+    // Current period: 2026-05-11 to 2026-05-20 in America/New_York (EDT, UTC-4)
+    // 2026-05-20 23:59:59.750000 EDT -> 2026-05-21 03:59:59.750000 UTC (MUST be counted in current period)
+    $currentBoundaryOrderId = (string) Str::uuid();
+    DB::table('orders')->insert([
+        'id' => $currentBoundaryOrderId,
+        'shop_id' => $this->shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/boundary-1',
+        'order_name' => '#boundary-1',
+        'currency_code' => 'USD',
+        'processed_at' => '2026-05-21 03:59:59.750000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Next-day midnight: 2026-05-21 00:00:00.000000 EDT -> 2026-05-21 04:00:00.000000 UTC (MUST NOT be counted in current period)
+    DB::table('orders')->insert([
+        'id' => (string) Str::uuid(),
+        'shop_id' => $this->shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/boundary-2',
+        'order_name' => '#boundary-2',
+        'currency_code' => 'USD',
+        'processed_at' => '2026-05-21 04:00:00.000000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Previous period (10 days preceding: 2026-05-01 to 2026-05-10)
+    // 2026-05-10 23:59:59.800000 EDT -> 2026-05-11 03:59:59.800000 UTC (MUST be counted in previous period)
+    DB::table('orders')->insert([
+        'id' => (string) Str::uuid(),
+        'shop_id' => $this->shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/boundary-prev',
+        'order_name' => '#boundary-prev',
+        'currency_code' => 'USD',
+        'processed_at' => '2026-05-11 03:59:59.800000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $response = s2sAnalyticsGet('/api/v1/analytics/overview', [
+        'from' => '2026-05-11',
+        'to' => '2026-05-20',
+    ]);
+
+    $response->assertOk();
+    expect($response->json('data.summary.orders'))->toBe(1)
+        ->and($response->json('data.comparison.orders.delta'))->toBe(0);
+});

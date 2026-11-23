@@ -264,3 +264,120 @@ it('returns 404 for unknown product or another shop product', function () {
         'to' => '2026-05-20',
     ])->assertNotFound();
 });
+
+it('accurately includes variant orders and refunds placed at fractional subsecond boundary timestamps', function () {
+    $productId = (string) Str::uuid();
+    DB::table('products')->insert([
+        'id' => $productId,
+        'shop_id' => $this->shopId,
+        'shopify_product_gid' => 'gid://shopify/Product/var-boundary',
+        'title' => 'Boundary Product',
+        'handle' => 'boundary-product',
+        'status' => 'active',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $variantId = (string) Str::uuid();
+    DB::table('product_variants')->insert([
+        'id' => $variantId,
+        'shop_id' => $this->shopId,
+        'product_id' => $productId,
+        'shopify_variant_gid' => 'gid://shopify/ProductVariant/var-boundary-1',
+        'title' => 'Standard',
+        'sku' => 'BND-STD',
+        'price' => '100.000000',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Current period requested: from=2026-05-11, to=2026-05-20 in America/New_York (EDT, UTC-4)
+    // Order on boundary: 2026-05-20 23:59:59.600000 EDT -> 2026-05-21 03:59:59.600000 UTC (MUST be included)
+    $order1Id = (string) Str::uuid();
+    DB::table('orders')->insert([
+        'id' => $order1Id,
+        'shop_id' => $this->shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/var-bnd-1',
+        'order_name' => '#var-bnd-1',
+        'currency_code' => 'USD',
+        'processed_at' => '2026-05-21 03:59:59.600000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $line1Id = (string) Str::uuid();
+    DB::table('order_line_items')->insert([
+        'id' => $line1Id,
+        'shop_id' => $this->shopId,
+        'order_id' => $order1Id,
+        'product_id' => $productId,
+        'variant_id' => $variantId,
+        'shopify_line_item_gid' => 'gid://shopify/LineItem/var-bnd-line-1',
+        'title_snapshot' => 'Standard',
+        'quantity' => 2,
+        'original_unit_price' => '100.000000',
+        'discount_amount' => '0.000000',
+        'currency_code' => 'USD',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Refund on boundary: 2026-05-20 23:59:59.900000 EDT -> 2026-05-21 03:59:59.900000 UTC (MUST be included)
+    DB::table('refund_line_items')->insert([
+        'id' => (string) Str::uuid(),
+        'shop_id' => $this->shopId,
+        'order_id' => $order1Id,
+        'line_item_id' => $line1Id,
+        'shopify_refund_gid' => 'gid://shopify/Refund/var-bnd-ref-1',
+        'shopify_refund_line_item_gid' => 'gid://shopify/RefundLineItem/var-bnd-ref-line-1',
+        'refunded_quantity' => 1,
+        'refunded_subtotal' => '100.000000',
+        'currency_code' => 'USD',
+        'processed_at' => '2026-05-21 03:59:59.900000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Next-day midnight order: 2026-05-21 00:00:00.000000 EDT -> 2026-05-21 04:00:00.000000 UTC (MUST be excluded)
+    $order2Id = (string) Str::uuid();
+    DB::table('orders')->insert([
+        'id' => $order2Id,
+        'shop_id' => $this->shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/var-bnd-2',
+        'order_name' => '#var-bnd-2',
+        'currency_code' => 'USD',
+        'processed_at' => '2026-05-21 04:00:00.000000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('order_line_items')->insert([
+        'id' => (string) Str::uuid(),
+        'shop_id' => $this->shopId,
+        'order_id' => $order2Id,
+        'product_id' => $productId,
+        'variant_id' => $variantId,
+        'shopify_line_item_gid' => 'gid://shopify/LineItem/var-bnd-line-2',
+        'title_snapshot' => 'Standard',
+        'quantity' => 5,
+        'original_unit_price' => '100.000000',
+        'discount_amount' => '0.000000',
+        'currency_code' => 'USD',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $response = s2sDetailGet("/api/v1/products/{$productId}/variants/analytics", [
+        'from' => '2026-05-11',
+        'to' => '2026-05-20',
+    ]);
+
+    $response->assertOk();
+    $variants = $response->json('data.variants');
+    expect($variants)->toHaveCount(1)
+        ->and($variants[0]['title'])->toBe('Standard')
+        ->and($variants[0]['gross_sales'])->toBe('200.000000')
+        ->and($variants[0]['refunds'])->toBe('100.000000')
+        ->and($variants[0]['net_sales'])->toBe('100.000000')
+        ->and($variants[0]['units_sold'])->toBe(1);
+});

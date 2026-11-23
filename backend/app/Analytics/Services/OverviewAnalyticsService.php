@@ -56,19 +56,19 @@ final readonly class OverviewAnalyticsService
             ->first();
 
         $currentStartUtc = $this->timezoneService->startOfDayUtc($from, $shop->timezone);
-        $currentEndUtc = $this->timezoneService->endOfDayUtc($to, $shop->timezone);
+        $currentNextDayUtc = $this->timezoneService->startOfNextDayUtc($to, $shop->timezone);
         $currentOrders = DB::table('orders')
             ->where('shop_id', $shop->id)
             ->where('processed_at', '>=', $currentStartUtc)
-            ->where('processed_at', '<=', $currentEndUtc)
+            ->where('processed_at', '<', $currentNextDayUtc)
             ->count();
 
         $prevStartUtc = $this->timezoneService->startOfDayUtc($previousRange['from'], $shop->timezone);
-        $prevEndUtc = $this->timezoneService->endOfDayUtc($previousRange['to'], $shop->timezone);
+        $prevNextDayUtc = $this->timezoneService->startOfNextDayUtc($previousRange['to'], $shop->timezone);
         $prevOrders = DB::table('orders')
             ->where('shop_id', $shop->id)
             ->where('processed_at', '>=', $prevStartUtc)
-            ->where('processed_at', '<=', $prevEndUtc)
+            ->where('processed_at', '<', $prevNextDayUtc)
             ->count();
 
         $currentGross = FinancialMath::formatDecimal((string) ($currentMetrics?->gross_sales ?? '0'));

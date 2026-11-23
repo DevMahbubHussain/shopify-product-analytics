@@ -8,7 +8,7 @@ use App\Analytics\Domain\FinancialMath;
 use App\Analytics\Services\StoreTimezoneService;
 use Carbon\CarbonImmutable;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
-final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUnique
+final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -59,7 +59,8 @@ final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniq
     {
         return [
             (new WithoutOverlapping("metrics:{$this->shopId}:{$this->productId}:{$this->metricDate}"))
-                ->expireAfter(60),
+                ->releaseAfter(10)
+                ->expireAfter(120),
         ];
     }
 
@@ -78,7 +79,7 @@ final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniq
         }
 
         $startUtc = $timezoneService->startOfDayUtc($this->metricDate, $shop->timezone);
-        $endUtc = $timezoneService->endOfDayUtc($this->metricDate, $shop->timezone);
+        $nextDayUtc = $timezoneService->startOfNextDayUtc($this->metricDate, $shop->timezone);
 
         $orderLines = DB::table('order_line_items')
             ->join('orders', function ($join): void {
@@ -88,7 +89,7 @@ final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniq
             ->where('order_line_items.shop_id', $this->shopId)
             ->where('order_line_items.product_id', $this->productId)
             ->where('orders.processed_at', '>=', $startUtc)
-            ->where('orders.processed_at', '<=', $endUtc)
+            ->where('orders.processed_at', '<', $nextDayUtc)
             ->select([
                 'order_line_items.currency_code',
                 'order_line_items.quantity',
@@ -106,7 +107,7 @@ final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniq
             ->where('refund_line_items.shop_id', $this->shopId)
             ->where('order_line_items.product_id', $this->productId)
             ->where('refund_line_items.processed_at', '>=', $startUtc)
-            ->where('refund_line_items.processed_at', '<=', $endUtc)
+            ->where('refund_line_items.processed_at', '<', $nextDayUtc)
             ->select([
                 'refund_line_items.currency_code',
                 'refund_line_items.refunded_quantity',

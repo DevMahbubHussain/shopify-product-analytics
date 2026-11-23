@@ -20,9 +20,14 @@ Binding engineering rules live in `AGENTS.md` and are imported verbatim below. T
 
 | File | Role | Read when |
 |---|---|---|
-| `AGENTS.md` | Binding constraints C1–C14, delivery roadmap Steps 1–7 | Always (imported above) |
+| `AGENTS.md` | Binding constraints C1–C16, delivery roadmap Steps 1–7 | Always (imported above) |
 | `PRD/PRD.md` | Product scope, metric definitions, data model, API surface, open decisions | Any feature, schema, or API work |
 | `docs/system-design.html` | HLD topology, ingestion pipeline LLD, ERD, sequence flows | Architecture, ingestion, schema, queue work |
+| `docs/half_open_day_boundary.md` | Day-boundary specification, `timestamptz(6)`, half-open interval `[startOfDayUtc, startOfNextDayUtc)` | Timezone & date filtering logic |
+| `docs/metrics_recalculation_on_updates.md` | Pre/post date-bucket recalculation on order & refund updates | Ingestion pipelines, queue recalculations |
+| `docs/job_concurrency_and_lost_updates.md` | Job uniqueness (`ShouldBeUniqueUntilProcessing`) & lock timeout hierarchy (`releaseAfter: 10, expireAfter: 120`) | Queue jobs, worker concurrency |
+| `docs/transactional_outbox_reliability.md` | Transactional Outbox pattern (`outbox_events`), atomic commit, fast-path + sweeper | Ingestion, queue delivery, event publishing |
+| `docs/performance_and_memory_benchmarks.md` | Batch limits (50 orders/250 lines), sub-50ms reads, O(1) query complexity, memory stability | Performance & scale testing |
 | `README.md` | Local setup (Colima + Docker), S2S handshake probe | Environment setup |
 
 Precedence on conflict: `AGENTS.md` > `PRD/PRD.md` > `docs/system-design.html` > `README.md`. Surface any conflict to the user instead of silently picking one.
@@ -77,8 +82,10 @@ Rule: Shopify GraphQL talks to Shopify. Laravel REST talks to our backend. React
 1. `VerifyHmacSignature` (S2S HMAC, ±300s)
 2. `ResolveShopTenant` (shop_domain → shop_id UUID)
 3. `DeduplicatePayload` (webhook_id + order GID)
-4. `UpsertNormalizedBatch` (`DB::transaction(fn() => ..., 5)`, `ON CONFLICT UPDATE`)
-5. `DispatchMetricAggregation` (`ShouldBeUnique` + `WithoutOverlapping`)
+4. `UpsertOrderBatch` / `UpsertRefundBatch` (atomic upsert + `outbox_events` insert inside `DB::transaction(fn() => ..., 5)`)
+5. `DispatchIngestedEvents` (dispatches domain event to Redis + marks outbox event `PUBLISHED`)
+
+Sweeper: `php artisan outbox:publish --age=30 --limit=100` republishes any pending outbox events if Redis was unavailable or a worker crashed.
 
 ---
 
@@ -110,12 +117,13 @@ All PKs UUID. All timestamps `TIMESTAMPTZ`. Money `DECIMAL(20,6)`. Every tenant 
 | `shops` | shop_domain, shopify_shop_gid, currency_code CHAR(3), timezone, status (active/uninstalled/suspended), installed_at, uninstalled_at | UNIQUE shop_domain |
 | `products` | shopify_product_gid, title, handle, vendor, product_type, status, image_url, published_at, shopify_updated_at | UNIQUE (shop_id, shopify_product_gid) |
 | `product_variants` | product_id, shopify_variant_gid, title, sku, price | UNIQUE (shop_id, shopify_variant_gid) |
-| `orders` | shopify_order_gid, order_name, financial_status, fulfillment_status, currency_code, processed_at, cancelled_at, shopify_updated_at | UNIQUE (shop_id, shopify_order_gid); INDEX (shop_id, processed_at) |
+| `orders` | shopify_order_gid, order_name, financial_status, fulfillment_status, currency_code, processed_at TIMESTAMPTZ(6), cancelled_at, shopify_updated_at | UNIQUE (shop_id, shopify_order_gid); INDEX (shop_id, processed_at) |
 | `order_line_items` | order_id, product_id NULL, variant_id NULL, shopify_line_item_gid, title_snapshot, sku_snapshot, quantity, original_unit_price, discount_amount, currency_code | INDEX (shop_id, product_id) |
-| `refund_line_items` | order_id, line_item_id NULL, shopify_refund_gid, refunded_quantity, refunded_subtotal, currency_code, processed_at | |
+| `refund_line_items` | order_id, line_item_id NULL, shopify_refund_gid, refunded_quantity, refunded_subtotal, currency_code, processed_at TIMESTAMPTZ(6) | |
 | `product_daily_metrics` | product_id, metric_date DATE, currency_code, gross_sales, discounts, refunds, net_sales, units_sold, order_count, calculated_at | UNIQUE (shop_id, product_id, metric_date, currency_code); INDEX (shop_id, metric_date) |
 | `sync_runs` | sync_type, status, started_at, completed_at, cursor_metadata, records_received, records_processed, error_code, error_summary | No tokens |
 | `webhook_events` | webhook_id, topic, payload_hash, status, received_at, processed_at, error_summary | UNIQUE (shop_id, webhook_id) |
+| `outbox_events` | shop_id, event_name, payload, status (PENDING/PUBLISHED/FAILED), created_at, published_at, error | INDEX (status, created_at) |
 | `subscriptions` | shopify_subscription_gid, plan_key, status, trial_ends_at, current_period_end | Entitlement snapshot; Shopify is source of truth |
 
 No customer PII (names, emails, phones, addresses) anywhere. Shopify session storage belongs to React Router only; no `encrypted_access_token` table in Laravel.
@@ -155,7 +163,7 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ---
 
-## 7. Current Repository State (verified 2026-11-19)
+## 7. Current Repository State (verified 2026-11-23)
 
 Steps 1, 2, and 3 are complete and merged to `main`. Steps 4 (Analytics Engine & Queues) and 5 (Laravel Analytics REST API) are complete on branch `analytics-engine`.
 
@@ -169,12 +177,12 @@ Steps 1, 2, and 3 are complete and merged to `main`. Steps 4 (Analytics Engine &
 | Shop registration | `shopify-app/app/features/shop-lifecycle/registerShop.server.ts`, called from `hooks.afterAuth` in `app/shopify.server.ts`: Shopify `shop { id currencyCode ianaTimezone }` → `POST /internal/v1/ingestion/shop`; failures propagate (install retried) |
 | Shop lifecycle | Laravel: `MarkShopUninstalled` (row lock, keeps first `uninstalled_at`, ignores deliveries triggered before `installed_at`), `SoftDeleteProducts`. Gateway: `routes/webhooks.app.uninstalled.tsx` → `lib/shopify/verifyWebhook.server.ts` (HMAC only) → `features/shop-lifecycle/appUninstalled.server.ts` (Laravel first, sessions deleted only on `uninstalled` or 404) → `uninstallShop.server.ts`. `BackendError` carries the HTTP status. Spec: `docs/shop-lifecycle.md` |
 | Sync & Ingestion | Product & order/refund crawler with cursor pagination, rate throttling, 60-day window, chunked delivery, stalled run recovery, and auto-polling UI in `shopify-app/app/routes/app._index.tsx`. Specs: `docs/shopify-harvester.md`, `docs/sync-orchestration.md` |
-| Queue & Aggregation | Queue connection `redis` via `laravel-worker`. Events `OrdersIngested` and `RefundsIngested` dispatched during ingestion; queued aggregation jobs `AggregateProductDailyMetricsJob` with `ShouldBeUnique`, `WithoutOverlapping`, retries ($tries = 5, backoff [5, 15, 60]), and failed job tracking. Spec: `docs/analytics-engine.md` |
+| Queue & Aggregation | Queue connection `redis` via `laravel-worker`. Events `OrdersIngested` and `RefundsIngested` carry `affectedBuckets` (pre/post update buckets); queued aggregation jobs `AggregateProductDailyMetricsJob` with `ShouldBeUniqueUntilProcessing`, `WithoutOverlapping(releaseAfter: 10, expireAfter: 120)`, retries ($tries = 5, backoff [5, 15, 60]), half-open intervals `[startOfDayUtc, startOfNextDayUtc)`, and failed job tracking. Transactional Outbox ensures zero event loss with sweeper command `outbox:publish`. Specs: `docs/analytics-engine.md`, `docs/half_open_day_boundary.md`, `docs/metrics_recalculation_on_updates.md`, `docs/job_concurrency_and_lost_updates.md`, `docs/transactional_outbox_reliability.md` |
 | Analytics REST API | `/api/v1/analytics/overview` (summary cards + comparisons), `/api/v1/analytics/sales-trend` (time-series with zero gap-filling), `/api/v1/products` (paginated performance ranking), `/api/v1/products/{id}/analytics`, `/api/v1/products/{id}/variants/analytics`. Sub-50ms reads on precomputed `product_daily_metrics`. |
-| Tests | Backend: 215 Pest tests (1009 assertions) under `backend/tests/Feature/{Security,Database,Ingestion,Infrastructure,Sync,Analytics}` and `backend/tests/Unit/Analytics`. Gateway: 121 tests next to their files under `shopify-app/app/` (`*.test.ts`) via `npm test` (`node --test`). All green. |
+| Tests | Backend: 284 Pest tests (3,131 assertions) under `backend/tests/{Feature,Unit}/{Security,Database,Ingestion,Infrastructure,Sync,Analytics,Performance}`. Gateway: 121 tests next to their files under `shopify-app/app/` (`*.test.ts`) via `npm test` (`node --test`). All green. |
 | shopify-app | Official React Router template (`@shopify/shopify-app-react-router` 4.x), Admin API `2026-10`, Polaris web components, Prisma sessions in Postgres `shopify_sessions`. Runs on host via `shopify app dev --config local`; optional container under compose profile `app`. |
-| Migrations | 10 domain tables + Laravel cache/jobs/failed_jobs tables; spec in `docs/migrations.md` |
-| Ingestion | `POST /internal/v1/ingestion/{shop,shop-uninstall,products,products-delete,orders,refunds,webhook-events,sync-status}` and `GET /internal/v1/sync/status` via `IngestionController` / `SyncStatusController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes`; contract in `docs/ingestion-api.md` |
+| Migrations | 11 domain tables (including `outbox_events`) + microsecond `timestamptz(6)` precision + Laravel cache/jobs/failed_jobs tables; specs in `docs/migrations.md`, `docs/half_open_day_boundary.md`, `docs/transactional_outbox_reliability.md` |
+| Ingestion | `POST /internal/v1/ingestion/{shop,shop-uninstall,products,products-delete,orders,refunds,webhook-events,sync-status}` and `GET /internal/v1/sync/status` via `IngestionController` / `SyncStatusController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes` with atomic Transactional Outbox persistence; contract in `docs/ingestion-api.md` |
 | Ingestion internals | FormRequest → readonly DTO (`app/Data/Ingestion`) → pipes; `GuardedUpsert` (ON CONFLICT with `shopify_updated_at` freshness guard), `TenantIdLookup`; VOs `ShopifyGid`, `DecimalAmount`; enums in `app/Enums` |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
 
@@ -211,5 +219,6 @@ Ask the user before assuming any of these:
 5. Scope every query/job by `shop_id`; `DECIMAL(20,6)` money with currency code; no PII (C5).
 6. Run edge checks: timezone day boundaries, leap years, negative net sales, zero previous period, partial cancellations, empty store, re-ingest same batch → zero dupes, free-tier → 403 (C6, C7).
 7. Performance: query count, `EXPLAIN ANALYZE`, sub-50ms aggregate reads, chunked/lazy iteration (C12).
-8. Inspect `psql` / `redis-cli` / container logs before declaring done (C4).
-9. No AI/model mentions in commits, PRs, code comments, or docs (C3).
+8. Scale & memory benchmarks: max batch limits (50 orders/250 lines), 1,000+ line aggregation with index scan, 365-day $O(1)$ query complexity, flat memory delta < 1MB (C16).
+9. Inspect `psql` / `redis-cli` / container logs before declaring done (C4).
+10. No AI/model mentions in commits, PRs, code comments, or docs (C3).

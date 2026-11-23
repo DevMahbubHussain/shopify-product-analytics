@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Ingestion\Pipes;
 
+use App\Analytics\Services\StoreTimezoneService;
 use App\Data\Ingestion\LineItemData;
 use App\Data\Ingestion\OrderBatch;
 use App\Data\Ingestion\OrderData;
@@ -12,6 +13,7 @@ use App\Ingestion\GuardedUpsert;
 use App\Ingestion\IngestionContext;
 use App\Ingestion\IngestionResponse;
 use App\Ingestion\Responses\BatchResult;
+use App\Ingestion\Services\OutboxService;
 use App\Ingestion\TenantIdLookup;
 use App\Support\ShopifyGid;
 use Closure;
@@ -22,6 +24,8 @@ final class UpsertOrderBatch
     public function __construct(
         private readonly GuardedUpsert $upsert,
         private readonly TenantIdLookup $lookup,
+        private readonly StoreTimezoneService $timezoneService,
+        private readonly OutboxService $outboxService,
     ) {
     }
 
@@ -29,8 +33,12 @@ final class UpsertOrderBatch
     {
         $batch = $context->payload(OrderBatch::class);
         $shopId = $context->shop()->id;
+        $timezone = $context->shop()->timezone;
 
-        $orderIds = DB::transaction(function () use ($batch, $shopId): array {
+        $incomingGids = array_map(fn (OrderData $o): string => (string) $o->gid, $batch->orders);
+        $preUpsertBuckets = $this->captureBucketsByOrderGids($shopId, $incomingGids, $timezone);
+
+        $result = DB::transaction(function () use ($batch, $shopId, $timezone, $preUpsertBuckets): array {
             $orderIds = ($this->upsert)(
                 'orders',
                 array_map(fn (OrderData $o): array => $this->orderRow($shopId, $o), $batch->orders),
@@ -48,14 +56,26 @@ final class UpsertOrderBatch
                 ['order_id', 'product_id', 'variant_id', 'title_snapshot', 'sku_snapshot', 'quantity', 'original_unit_price', 'discount_amount', 'currency_code'],
             );
 
-            return array_values(array_map(fn (OrderData $o): string => $orderIds[(string) $o->gid], $writtenOrders));
+            $writtenIds = array_values(array_map(fn (OrderData $o): string => $orderIds[(string) $o->gid], $writtenOrders));
+
+            if ($writtenIds === []) {
+                return ['order_ids' => [], 'event' => null];
+            }
+
+            $postUpsertBuckets = $this->captureBucketsByOrderIds($shopId, $writtenIds, $timezone);
+            $affectedBuckets = $this->mergeBuckets($preUpsertBuckets, $postUpsertBuckets);
+
+            $event = new OrdersIngested($shopId, $writtenIds, $affectedBuckets);
+            $this->outboxService->record($shopId, $event);
+
+            return ['order_ids' => $writtenIds, 'event' => $event];
         }, 5);
 
-        if ($orderIds !== []) {
-            $context->events[] = new OrdersIngested($shopId, $orderIds);
+        if ($result['event'] !== null) {
+            $context->events[] = $result['event'];
         }
 
-        $context->response = new BatchResult(count($batch->orders), count($orderIds));
+        $context->response = new BatchResult(count($batch->orders), count($result['order_ids']));
 
         return $next($context);
     }
@@ -107,5 +127,91 @@ final class UpsertOrderBatch
         }
 
         return $rows;
+    }
+
+    /**
+     * @param list<string> $orderGids
+     * @return array<string, array{product_id: string, metric_date: string}>
+     */
+    private function captureBucketsByOrderGids(string $shopId, array $orderGids, ?string $timezone): array
+    {
+        if ($orderGids === []) {
+            return [];
+        }
+
+        $lines = DB::table('order_line_items')
+            ->join('orders', function ($join): void {
+                $join->on('orders.id', '=', 'order_line_items.order_id')
+                    ->on('orders.shop_id', '=', 'order_line_items.shop_id');
+            })
+            ->where('order_line_items.shop_id', $shopId)
+            ->whereIn('orders.shopify_order_gid', $orderGids)
+            ->whereNotNull('order_line_items.product_id')
+            ->whereNotNull('orders.processed_at')
+            ->select([
+                'order_line_items.product_id',
+                'orders.processed_at',
+            ])
+            ->get();
+
+        return $this->formatBuckets($lines, $timezone);
+    }
+
+    /**
+     * @param list<string> $orderIds
+     * @return array<string, array{product_id: string, metric_date: string}>
+     */
+    private function captureBucketsByOrderIds(string $shopId, array $orderIds, ?string $timezone): array
+    {
+        if ($orderIds === []) {
+            return [];
+        }
+
+        $lines = DB::table('order_line_items')
+            ->join('orders', function ($join): void {
+                $join->on('orders.id', '=', 'order_line_items.order_id')
+                    ->on('orders.shop_id', '=', 'order_line_items.shop_id');
+            })
+            ->where('order_line_items.shop_id', $shopId)
+            ->whereIn('orders.id', $orderIds)
+            ->whereNotNull('order_line_items.product_id')
+            ->whereNotNull('orders.processed_at')
+            ->select([
+                'order_line_items.product_id',
+                'orders.processed_at',
+            ])
+            ->get();
+
+        return $this->formatBuckets($lines, $timezone);
+    }
+
+    /**
+     * @param iterable<object> $lines
+     * @return array<string, array{product_id: string, metric_date: string}>
+     */
+    private function formatBuckets(iterable $lines, ?string $timezone): array
+    {
+        $buckets = [];
+        foreach ($lines as $line) {
+            $productId = (string) $line->product_id;
+            $metricDate = $this->timezoneService->toStoreDate($line->processed_at, $timezone);
+            $key = "{$productId}:{$metricDate}";
+            $buckets[$key] = [
+                'product_id' => $productId,
+                'metric_date' => $metricDate,
+            ];
+        }
+
+        return $buckets;
+    }
+
+    /**
+     * @param array<string, array{product_id: string, metric_date: string}> $pre
+     * @param array<string, array{product_id: string, metric_date: string}> $post
+     * @return list<array{product_id: string, metric_date: string}>
+     */
+    private function mergeBuckets(array $pre, array $post): array
+    {
+        return array_values(array_merge($pre, $post));
     }
 }

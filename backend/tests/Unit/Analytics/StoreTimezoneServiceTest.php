@@ -67,3 +67,31 @@ it('converts store-local date boundaries into UTC timestamps', function () {
     expect($utcStart->toIso8601String())->toBe('2026-07-10T04:00:00+00:00');
     expect($utcEnd->toIso8601String())->toBe('2026-07-11T03:59:59+00:00');
 });
+
+it('calculates start of next day in UTC for half-open interval queries', function () {
+    $service = new StoreTimezoneService();
+
+    // Standard date: America/New_York (EDT, UTC-4 on July 10)
+    // 2026-07-11 00:00:00 EDT is 2026-07-11 04:00:00 UTC
+    $nextDayUtc = $service->startOfNextDayUtc('2026-07-10', 'America/New_York');
+    expect($nextDayUtc->toIso8601String())->toBe('2026-07-11T04:00:00+00:00');
+
+    // Year boundary: Asia/Tokyo (+09:00) on Dec 31
+    // 2027-01-01 00:00:00 JST is 2026-12-31 15:00:00 UTC
+    $yearBoundaryNextDay = $service->startOfNextDayUtc('2026-12-31', 'Asia/Tokyo');
+    expect($yearBoundaryNextDay->toIso8601String())->toBe('2026-12-31T15:00:00+00:00');
+
+    // Leap day boundary: 2028-02-28 in America/Los_Angeles (PST, UTC-8)
+    // Next day start is 2028-02-29 00:00:00 PST -> 2028-02-29 08:00:00 UTC
+    $leapNextDay = $service->startOfNextDayUtc('2028-02-28', 'America/Los_Angeles');
+    expect($leapNextDay->toIso8601String())->toBe('2028-02-29T08:00:00+00:00');
+
+    // Daylight saving transition: America/New_York on spring forward day (2026-03-08)
+    // Next day start is 2026-03-09 00:00:00 EDT (UTC-4) -> 2026-03-09 04:00:00 UTC
+    $dstNextDay = $service->startOfNextDayUtc('2026-03-08', 'America/New_York');
+    expect($dstNextDay->toIso8601String())->toBe('2026-03-09T04:00:00+00:00');
+
+    // Identity with next day's startOfDayUtc
+    $startOfNext = $service->startOfDayUtc('2026-07-11', 'America/New_York');
+    expect($nextDayUtc->equalTo($startOfNext))->toBeTrue();
+});

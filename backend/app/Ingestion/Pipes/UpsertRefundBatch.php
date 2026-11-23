@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Ingestion\Pipes;
 
+use App\Analytics\Services\StoreTimezoneService;
 use App\Data\Ingestion\RefundBatch;
 use App\Data\Ingestion\RefundLineData;
 use App\Events\RefundsIngested;
@@ -12,6 +13,7 @@ use App\Ingestion\GuardedUpsert;
 use App\Ingestion\IngestionContext;
 use App\Ingestion\IngestionResponse;
 use App\Ingestion\Responses\BatchResult;
+use App\Ingestion\Services\OutboxService;
 use App\Ingestion\TenantIdLookup;
 use App\Support\ShopifyGid;
 use Closure;
@@ -22,6 +24,8 @@ final class UpsertRefundBatch
     public function __construct(
         private readonly GuardedUpsert $upsert,
         private readonly TenantIdLookup $lookup,
+        private readonly StoreTimezoneService $timezoneService,
+        private readonly OutboxService $outboxService,
     ) {
     }
 
@@ -29,31 +33,60 @@ final class UpsertRefundBatch
     {
         $batch = $context->payload(RefundBatch::class);
         $shopId = $context->shop()->id;
+        $timezone = $context->shop()->timezone;
+
+        $incomingRefundGids = array_map(fn (RefundLineData $l): string => (string) $l->refundLineItemGid, $batch->lines);
+        $preUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
 
         $orderIds = $this->lookup->byGid('orders', 'shopify_order_gid', $shopId, array_map(fn (RefundLineData $l): ShopifyGid => $l->orderGid, $batch->lines));
         $this->assertOrdersKnown($batch, $orderIds);
         $lineItemIds = $this->lookup->byGid('order_line_items', 'shopify_line_item_gid', $shopId, array_map(fn (RefundLineData $l): ?ShopifyGid => $l->lineItemGid, $batch->lines));
 
-        $written = DB::transaction(fn (): array => ($this->upsert)(
-            'refund_line_items',
-            array_map(fn (RefundLineData $l): array => [
-                'shop_id' => $shopId,
-                'order_id' => $orderIds[(string) $l->orderGid],
-                'line_item_id' => $lineItemIds[(string) $l->lineItemGid] ?? null,
-                'shopify_refund_gid' => $l->refundGid,
-                'shopify_refund_line_item_gid' => $l->refundLineItemGid,
-                'refunded_quantity' => $l->quantity,
-                'refunded_subtotal' => $l->subtotal,
-                'currency_code' => $l->currencyCode,
-                'processed_at' => $l->processedAt,
-            ], $batch->lines),
-            ['shop_id', 'shopify_refund_line_item_gid'],
-            ['order_id', 'line_item_id', 'shopify_refund_gid', 'refunded_quantity', 'refunded_subtotal', 'currency_code', 'processed_at'],
-        ), 5);
+        $result = DB::transaction(function () use (
+            $batch,
+            $shopId,
+            $timezone,
+            $orderIds,
+            $lineItemIds,
+            $incomingRefundGids,
+            $preUpsertBuckets
+        ): array {
+            $written = ($this->upsert)(
+                'refund_line_items',
+                array_map(fn (RefundLineData $l): array => [
+                    'shop_id' => $shopId,
+                    'order_id' => $orderIds[(string) $l->orderGid],
+                    'line_item_id' => $lineItemIds[(string) $l->lineItemGid] ?? null,
+                    'shopify_refund_gid' => $l->refundGid,
+                    'shopify_refund_line_item_gid' => $l->refundLineItemGid,
+                    'refunded_quantity' => $l->quantity,
+                    'refunded_subtotal' => $l->subtotal,
+                    'currency_code' => $l->currencyCode,
+                    'processed_at' => $l->processedAt,
+                ], $batch->lines),
+                ['shop_id', 'shopify_refund_line_item_gid'],
+                ['order_id', 'line_item_id', 'shopify_refund_gid', 'refunded_quantity', 'refunded_subtotal', 'currency_code', 'processed_at'],
+            );
 
-        $affectedOrderIds = array_values(array_unique(array_map(fn (RefundLineData $l): string => $orderIds[(string) $l->orderGid], $batch->lines)));
-        $context->events[] = new RefundsIngested($shopId, $affectedOrderIds);
-        $context->response = new BatchResult(count($batch->lines), count($written));
+            if ($written === []) {
+                return ['written_count' => 0, 'event' => null];
+            }
+
+            $postUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
+            $affectedBuckets = $this->mergeBuckets($preUpsertBuckets, $postUpsertBuckets);
+            $affectedOrderIds = array_values(array_unique(array_map(fn (RefundLineData $l): string => $orderIds[(string) $l->orderGid], $batch->lines)));
+
+            $event = new RefundsIngested($shopId, $affectedOrderIds, $affectedBuckets);
+            $this->outboxService->record($shopId, $event);
+
+            return ['written_count' => count($written), 'event' => $event];
+        }, 5);
+
+        if ($result['event'] !== null) {
+            $context->events[] = $result['event'];
+        }
+
+        $context->response = new BatchResult(count($batch->lines), $result['written_count']);
 
         return $next($context);
     }
@@ -71,5 +104,54 @@ final class UpsertRefundBatch
 
             throw new MissingOrders($missing);
         }
+    }
+
+    /**
+     * @param list<string> $refundGids
+     * @return array<string, array{product_id: string, metric_date: string}>
+     */
+    private function captureBucketsByRefundGids(string $shopId, array $refundGids, ?string $timezone): array
+    {
+        if ($refundGids === []) {
+            return [];
+        }
+
+        $lines = DB::table('refund_line_items')
+            ->join('order_line_items', function ($join): void {
+                $join->on('order_line_items.id', '=', 'refund_line_items.line_item_id')
+                    ->on('order_line_items.shop_id', '=', 'refund_line_items.shop_id');
+            })
+            ->where('refund_line_items.shop_id', $shopId)
+            ->whereIn('refund_line_items.shopify_refund_line_item_gid', $refundGids)
+            ->whereNotNull('order_line_items.product_id')
+            ->whereNotNull('refund_line_items.processed_at')
+            ->select([
+                'order_line_items.product_id',
+                'refund_line_items.processed_at',
+            ])
+            ->get();
+
+        $buckets = [];
+        foreach ($lines as $line) {
+            $productId = (string) $line->product_id;
+            $metricDate = $this->timezoneService->toStoreDate($line->processed_at, $timezone);
+            $key = "{$productId}:{$metricDate}";
+            $buckets[$key] = [
+                'product_id' => $productId,
+                'metric_date' => $metricDate,
+            ];
+        }
+
+        return $buckets;
+    }
+
+    /**
+     * @param array<string, array{product_id: string, metric_date: string}> $pre
+     * @param array<string, array{product_id: string, metric_date: string}> $post
+     * @return list<array{product_id: string, metric_date: string}>
+     */
+    private function mergeBuckets(array $pre, array $post): array
+    {
+        return array_values(array_merge($pre, $post));
     }
 }

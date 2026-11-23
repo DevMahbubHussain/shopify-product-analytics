@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Jobs\AggregateProductDailyMetricsJob;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
@@ -13,7 +14,7 @@ use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
-it('implements ShouldQueue, ShouldBeUnique, and specifies WithoutOverlapping middleware', function () {
+it('implements ShouldQueue, ShouldBeUniqueUntilProcessing, and specifies WithoutOverlapping middleware', function () {
     $shopId = (string) Str::uuid();
     $productId = (string) Str::uuid();
     $metricDate = '2026-05-15';
@@ -21,12 +22,18 @@ it('implements ShouldQueue, ShouldBeUnique, and specifies WithoutOverlapping mid
     $job = new AggregateProductDailyMetricsJob($shopId, $productId, $metricDate);
 
     expect($job)->toBeInstanceOf(ShouldQueue::class)
+        ->and($job)->toBeInstanceOf(ShouldBeUniqueUntilProcessing::class)
         ->and($job)->toBeInstanceOf(ShouldBeUnique::class)
         ->and($job->uniqueId())->toBe("{$shopId}:{$productId}:{$metricDate}");
 
     $middleware = $job->middleware();
     expect($middleware)->toHaveCount(1)
         ->and($middleware[0])->toBeInstanceOf(WithoutOverlapping::class);
+
+    /** @var WithoutOverlapping $withoutOverlapping */
+    $withoutOverlapping = $middleware[0];
+    expect($withoutOverlapping->expiresAfter)->toBe(120)
+        ->and($withoutOverlapping->releaseAfter)->toBe(10);
 });
 
 it('aggregates orders and refunds for a product on a store metric date', function () {
@@ -379,4 +386,127 @@ it('enforces tenant isolation across shops', function () {
         ->and($shop1Metric->gross_sales)->toBe('10.000000')
         ->and($shop1Metric->units_sold)->toBe(1)
         ->and($shop2Metric)->toBeNull();
+});
+
+it('aggregates orders and refunds placed at fractional subsecond timestamps up to day boundary', function () {
+    $shopId = (string) Str::uuid();
+    $currency = 'USD';
+    $timezone = 'America/New_York'; // UTC-4 during EDT in May
+
+    DB::table('shops')->insert([
+        'id' => $shopId,
+        'shop_domain' => 'fractional-test.myshopify.com',
+        'currency_code' => $currency,
+        'timezone' => $timezone,
+        'status' => 'active',
+        'installed_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $productId = (string) Str::uuid();
+    DB::table('products')->insert([
+        'id' => $productId,
+        'shop_id' => $shopId,
+        'shopify_product_gid' => 'gid://shopify/Product/9991',
+        'title' => 'Edge Case Product',
+        'handle' => 'edge-case-product',
+        'status' => 'active',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Metric Date: 2026-05-15
+    // In America/New_York (EDT, UTC-4), 2026-05-15 23:59:59.500000 EDT is 2026-05-16 03:59:59.500000 UTC
+    // Notice this fractional subsecond falls between 23:59:59.000000 and 00:00:00.000000 of next day
+    $orderAtFractionalSecond = '2026-05-16 03:59:59.500000+00';
+    $order1Id = (string) Str::uuid();
+    DB::table('orders')->insert([
+        'id' => $order1Id,
+        'shop_id' => $shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/7771',
+        'order_name' => '#7771',
+        'currency_code' => $currency,
+        'processed_at' => $orderAtFractionalSecond,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $line1Id = (string) Str::uuid();
+    DB::table('order_line_items')->insert([
+        'id' => $line1Id,
+        'shop_id' => $shopId,
+        'order_id' => $order1Id,
+        'product_id' => $productId,
+        'shopify_line_item_gid' => 'gid://shopify/LineItem/7772',
+        'title_snapshot' => 'Edge Case Product',
+        'quantity' => 1,
+        'original_unit_price' => '100.000000',
+        'discount_amount' => '0.000000',
+        'currency_code' => $currency,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Refund processed at fractional second: 2026-05-15 23:59:59.850000 EDT -> 2026-05-16 03:59:59.850000 UTC
+    DB::table('refund_line_items')->insert([
+        'id' => (string) Str::uuid(),
+        'shop_id' => $shopId,
+        'order_id' => $order1Id,
+        'line_item_id' => $line1Id,
+        'shopify_refund_gid' => 'gid://shopify/Refund/7773',
+        'shopify_refund_line_item_gid' => 'gid://shopify/RefundLineItem/7774',
+        'refunded_quantity' => 1,
+        'refunded_subtotal' => '20.000000',
+        'currency_code' => $currency,
+        'processed_at' => '2026-05-16 03:59:59.850000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    // Order processed at exact next day midnight: 2026-05-16 00:00:00.000000 EDT -> 2026-05-16 04:00:00.000000 UTC
+    // This MUST be excluded from 2026-05-15 metrics
+    $order2Id = (string) Str::uuid();
+    DB::table('orders')->insert([
+        'id' => $order2Id,
+        'shop_id' => $shopId,
+        'shopify_order_gid' => 'gid://shopify/Order/7775',
+        'order_name' => '#7775',
+        'currency_code' => $currency,
+        'processed_at' => '2026-05-16 04:00:00.000000+00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('order_line_items')->insert([
+        'id' => (string) Str::uuid(),
+        'shop_id' => $shopId,
+        'order_id' => $order2Id,
+        'product_id' => $productId,
+        'shopify_line_item_gid' => 'gid://shopify/LineItem/7776',
+        'title_snapshot' => 'Edge Case Product',
+        'quantity' => 1,
+        'original_unit_price' => '500.000000',
+        'discount_amount' => '0.000000',
+        'currency_code' => $currency,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $job = new AggregateProductDailyMetricsJob($shopId, $productId, '2026-05-15');
+    $job->handle();
+
+    $metric = DB::table('product_daily_metrics')
+        ->where('shop_id', $shopId)
+        ->where('product_id', $productId)
+        ->where('metric_date', '2026-05-15')
+        ->first();
+
+    expect($metric)->not->toBeNull()
+        ->and($metric->gross_sales)->toBe('100.000000')
+        ->and($metric->discounts)->toBe('0.000000')
+        ->and($metric->refunds)->toBe('20.000000')
+        ->and($metric->net_sales)->toBe('80.000000')
+        ->and($metric->units_sold)->toBe(0)
+        ->and($metric->order_count)->toBe(1);
 });
