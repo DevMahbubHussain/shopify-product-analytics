@@ -38,6 +38,9 @@ When writing or changing code in any phase:
 - **Currency Isolation:** Always store amounts with their ISO 4217 currency code. Never sum amounts across different currencies.
 - **Timestamp Precision & Half-Open Day Boundaries:** Timestamps (`processed_at`, `refunded_at`) must be stored in PostgreSQL with microsecond precision (`timestamptz(6)`). All daily metric aggregations and analytics queries MUST use half-open intervals $[startOfDayUtc, startOfNextDayUtc)$ (`>= startOfDayUtc` and `< startOfNextDayUtc`). Closed intervals (`<= endOfDay`) or `23:59:59` are strictly prohibited to prevent data loss or double-counting at boundary microseconds.
 - **Update Recalculation Buckets:** When orders or refunds are updated, edited, or cancelled, pre-update and post-update state must be captured. Ingestion pipelines must dispatch recalculation jobs for both the previous `(product_id, metric_date)` and the updated `(product_id, metric_date)` buckets so daily aggregate tables are never stale.
+- **Multi-Currency Bucket Staleness Elimination:** When recalculating metrics for affected `(shop_id, product_id, metric_date)` buckets, jobs must query all historical currencies currently present in `product_daily_metrics`. If currency modifications, cancellations, or edits remove transactions in a previously recorded currency, the stale currency row must be explicitly zeroed out so foreign currency amounts never linger.
+- **Refund Freshness Guards & Monotonicity:** Track `shopify_updated_at` (falling back monotonically to `processed_at`) on `refund_line_items`. Ingestion must enforce conditional updates (`ON CONFLICT DO UPDATE WHERE excluded.shopify_updated_at >= refund_line_items.shopify_updated_at`) and reject stale out-of-order deliveries (`written = 0, skipped_stale = 1`), suppressing outbox events and recalculation triggers.
+- **Deterministic Parent Row Locking Under Concurrency:** Ingestion pipelines writing or updating child records (order line items, refund line items) must acquire deterministic row locks (`ORDER BY id ASC lockForUpdate()`) on existing parent orders within `DB::transaction(fn() => ..., 5)` to eliminate deadlocks and race conditions during concurrent webhook ingestion.
 - **Protected Customer Data (PCD):** Strictly avoid collecting or storing customer personal data (names, email addresses, phone numbers, shipping addresses) in the database.
 - **Webhook Idempotency:** Webhook handlers must verify `X-Shopify-Hmac-Sha256`, deduplicate deliveries using the Shopify webhook ID against `webhook_events`, respond with `200 OK` within 2 seconds, and delegate processing to background queues.
 
@@ -87,11 +90,13 @@ The Laravel backend must strictly implement the recurring cross-cutting patterns
 7. **Pragmatic Driver Pattern (Avoid Premature Abstraction):**
    - Do not invent custom managers or driver abstractions for components with a single concrete implementation.
    - Rely on Laravel's core managers (`Storage`, `Queue`, `Cache`). Apply the Driver pattern (`Illuminate\Support\Manager`) only where multiple interchangeable drivers genuinely exist (e.g. `ExportManager` with `CsvExportDriver`).
-8. **The Transactional Outbox Pattern (Zero Event Loss):**
+8. **The Transactional Outbox Pattern (Zero Event Loss & Replay Idempotency):**
    - Ingestion pipelines (`POST /internal/v1/ingestion/*`) and any process triggering asynchronous side-effects must atomically persist domain events to the `outbox_events` table inside the exact same `DB::transaction(fn() => ..., 5)` as the database upsert.
    - A dual-path delivery model guarantees zero event loss:
      1. *Fast-Path:* The HTTP pipeline immediately dispatches the domain event to Redis and marks the outbox event as `PUBLISHED`.
-     2. *Recovery Sweeper:* If Redis is temporarily unavailable or a worker/process terminates abruptly after commit, the scheduled background command `php artisan outbox:publish --age=30 --limit=100` queries pending records older than 30 seconds and republishes them to Redis.
+     2. *Recovery Sweeper & Backoff:* If Redis is temporarily unavailable or a process terminates abruptly, the scheduled background command `php artisan outbox:publish --age=30 --limit=100` queries pending records older than 30 seconds and republishes them.
+     3. *Exponential Retry Backoff & Poison Pill Isolation:* Retries must use truncated exponential backoff ($2^{\min(\text{attempts}, 6)} \times 5\text{s}$), capped at 5 attempts before marking status `FAILED`. Fatal unrecoverable payload exceptions (e.g., `\InvalidArgumentException`, unresolvable tenant) must immediately transition status to `FAILED` with diagnostics and zero retry delay.
+     4. *Dual-Dispatch Crash Replay Idempotency:* Because a process crash between Redis queue dispatch and PostgreSQL outbox commit causes duplicate sweeper deliveries (at-least-once guarantee), all downstream consumers (e.g., `AggregateProductDailyMetricsJob`) must compute pure aggregations from raw database rows and upsert precomputed values, ensuring duplicate dispatches converge to identical totals without double-counting.
 
 ### C10. Pragmatic Simplicity & Clean Code Standards (No Over-Engineering)
 - **No Over-Engineering or Speculative Abstraction:** Write straightforward, expressive, and developer-friendly code. Never introduce complex design patterns, multi-tier abstractions, or generic wrappers when a direct, readable implementation satisfies the task. Follow YAGNI (You Aren't Gonna Need It) and KISS (Keep It Simple, Stupid).
@@ -161,8 +166,9 @@ This rule overrides any instruction to "go", "continue", or "implement the featu
 Whenever any feature, ingestion pipeline, background queue job, or analytics REST endpoint is developed, modified, or completed, it MUST be subjected to automated load and memory benchmarks before being considered complete:
 1. **Max Boundary Batch Ingestion:** Ingest maximum supported batch limits (e.g., 50 orders / 250 line items per S2S payload) and verify sub-second completion without transaction rollbacks, deadlocks, or lock contention.
 2. **High-Volume Aggregation & PostgreSQL Index Scans:** Aggregate metrics over large datasets (1,000+ line items) and verify via query logging / `EXPLAIN ANALYZE` that PostgreSQL executes composite index scans (e.g., `orders_shop_processed_idx`, `line_items_order_tenant_fk`) sub-100ms with zero full-table scans.
-3. **Long-Range Historical Querying & Constant Complexity ($O(1)$ Queries):** Verify that wide-window dashboard queries (e.g., 365 days of historical data) execute sub-50ms with a constant query count ($O(1)$ queries) and zero N+1 database queries.
-4. **Memory Leak Resistance & Flat Footprint:** Benchmark sequential batch executions to confirm memory stability delta (< 1MB) and ensure streaming/lazy iteration (`lazy()`, `cursor()`, chunking) prevents memory exhaustion under long-running queue worker or CLI execution.
+3. **Natural Cost-Based Index Evaluation (No Planner Overrides):** PostgreSQL query planner evaluation must reflect natural cost estimates without artificial planner flags (`enable_seqscan = OFF`). Test fixtures and benchmarks must seed realistic data distributions (e.g., 50 pending outbox events among 2,000 total events) so PostgreSQL's optimizer naturally selects index scans.
+4. **Long-Range Historical Querying & Constant Complexity ($O(1)$ Queries):** Verify that wide-window dashboard queries (e.g., 365 days of historical data) execute sub-50ms with a constant query count ($O(1)$ queries) and zero N+1 database queries. Report multi-sample latency distributions (p50 < 30ms, p95 < 60ms) over multiple runs rather than single-run averages.
+5. **Memory Leak Resistance & Engine Heap Measurement:** Benchmark sequential batch executions to confirm engine heap stability delta (< 2MB) using `memory_get_usage(false)` to measure true PHP engine allocations without noise from libc OS page allocator chunking (`memory_get_usage(true)`), ensuring streaming and lazy iteration (`lazy()`, `cursor()`, chunking) prevent memory exhaustion.
 
 ---
 
@@ -369,6 +375,10 @@ flowchart TD
 | **Dashboard Querying** | Always query precomputed `product_daily_metrics`; never query raw order lines live |
 | **Webhook Response** | Immediate `200 OK` after HMAC validation; heavy tasks queued in Redis |
 | **Timezone Boundary** | Store timestamps in UTC; convert to store timezone before daily bucketing |
-| **Transactional Outbox** | Ingestion pipeline writes to `outbox_events` inside `DB::transaction`; dual-path fast-path + sweeper |
+| **Transactional Outbox** | Ingestion pipeline writes to `outbox_events` inside `DB::transaction`; dual-path fast-path + sweeper with exponential backoff and replay idempotency |
 | **Half-Open Day Boundary** | `[startOfDayUtc, startOfNextDayUtc)` with `timestamptz(6)` microsecond precision; never `<= endOfDay` |
 | **Concurrency Lock Hierarchy** | `ShouldBeUniqueUntilProcessing` + `WithoutOverlapping(releaseAfter: 10, expireAfter: 120)` > 90s worker timeout |
+| **Parent Row Locking** | Ingestion locks parent orders with `ORDER BY id ASC lockForUpdate()` in `DB::transaction` to prevent race conditions & deadlocks |
+| **Refund Freshness Guard** | `shopify_updated_at` conditional update (`WHERE excluded >= existing`); reject stale out-of-order webhooks (`skipped_stale = 1`) |
+| **Multi-Currency Staleness** | Clear old currency buckets in `product_daily_metrics` when order edits or cancellations remove transactions in that currency |
+| **Benchmark Standards** | Natural cost-based plans without planner flags; engine heap via `memory_get_usage(false)` (< 2MB); p50 < 30ms, p95 < 60ms |
