@@ -55,6 +55,20 @@ final class OutboxService
     }
 
     /**
+     * Marks an unrecoverable outbox event as failed so it does not block future runs.
+     */
+    public function markFailed(string $outboxId): void
+    {
+        DB::table('outbox_events')
+            ->where('id', $outboxId)
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'failed',
+                'updated_at' => now(),
+            ]);
+    }
+
+    /**
      * Retrieves stranded pending events that were not published within the expected cutoff.
      * When $lock is true, acquires row locks using FOR UPDATE SKIP LOCKED for concurrent worker safety.
      *

@@ -41,10 +41,11 @@ final class UpsertOrderBatch
         usort($orders, fn (OrderData $a, OrderData $b): int => strcmp((string) $a->gid, (string) $b->gid));
 
         $incomingGids = array_map(fn (OrderData $o): string => (string) $o->gid, $orders);
-        $preUpsertBuckets = $this->captureBucketsByOrderGids($shopId, $incomingGids, $timezone);
-        $preExistingTimestamps = $this->captureOrderTimestampsByGids($shopId, $incomingGids);
 
-        $result = DB::transaction(function () use ($orders, $shopId, $timezone, $preUpsertBuckets, $preExistingTimestamps): array {
+        $result = DB::transaction(function () use ($orders, $shopId, $timezone, $incomingGids): array {
+            $preUpsertBuckets = $this->captureBucketsByOrderGids($shopId, $incomingGids, $timezone);
+            $preExistingTimestamps = $this->captureOrderTimestampsByGids($shopId, $incomingGids);
+
             $orderIds = ($this->upsert)(
                 'orders',
                 array_map(fn (OrderData $o): array => $this->orderRow($shopId, $o), $orders),

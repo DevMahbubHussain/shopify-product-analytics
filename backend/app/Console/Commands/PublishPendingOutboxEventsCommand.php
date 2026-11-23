@@ -50,6 +50,7 @@ final class PublishPendingOutboxEventsCommand extends Command
                     $publishedCount++;
                 } catch (Throwable $e) {
                     $this->error("Failed to publish outbox event [{$record->id}]: {$e->getMessage()}");
+                    $outboxService->markFailed($record->id);
                 }
             }
         }, 5);

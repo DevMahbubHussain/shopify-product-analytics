@@ -237,7 +237,7 @@ it('handles 365 days of historical metrics with zero N+1 queries and sub-100ms r
         ]);
 
     // Zero N+1 Queries Assertion: Constant O(1) query count (exactly 7 queries for full auth, plan check, and aggregates)
-    expect(count($executedQueries))->toBeLessThanOrEqual(7);
+    expect(count($executedQueries))->toBe(7);
 
     // Latency Assertion: Responds under 100ms in Docker container
     expect($responseMs)->toBeLessThan(100.0);

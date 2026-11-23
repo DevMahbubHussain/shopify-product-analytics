@@ -73,6 +73,22 @@ services:
     networks:
       - app-network
 
+  laravel-scheduler:
+    image: shopify-product-analytics-backend:latest
+    container_name: spa_scheduler
+    restart: unless-stopped
+    working_dir: /var/www/backend
+    volumes:
+      - ./backend:/var/www/backend
+    command: php artisan schedule:work
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
   shopify-app:
     build:
       context: ./shopify-app

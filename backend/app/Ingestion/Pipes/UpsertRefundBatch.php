@@ -36,7 +36,6 @@ final class UpsertRefundBatch
         $timezone = $context->shop()->timezone;
 
         $incomingRefundGids = array_map(fn (RefundLineData $l): string => (string) $l->refundLineItemGid, $batch->lines);
-        $preUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
 
         $orderIds = $this->lookup->byGid('orders', 'shopify_order_gid', $shopId, array_map(fn (RefundLineData $l): ShopifyGid => $l->orderGid, $batch->lines));
         $this->assertOrdersKnown($batch, $orderIds);
@@ -48,9 +47,10 @@ final class UpsertRefundBatch
             $timezone,
             $orderIds,
             $lineItemIds,
-            $incomingRefundGids,
-            $preUpsertBuckets
+            $incomingRefundGids
         ): array {
+            $preUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
+
             $written = ($this->upsert)(
                 'refund_line_items',
                 array_map(fn (RefundLineData $l): array => [

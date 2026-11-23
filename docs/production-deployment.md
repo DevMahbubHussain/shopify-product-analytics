@@ -42,6 +42,10 @@ Product Analytics separates client-facing Shopify integration from high-throughp
 [laravel-worker Queue Daemon Container (PHP 8.3 / Supervisor)]
   - Processes Metric Aggregation Jobs (ProductDailyMetrics)
   - Processes Asynchronous CSV Report Exports
+
+[laravel-scheduler Console Daemon Container (PHP 8.3 / schedule:work)]
+  - Sweeps Stranded Outbox Events Every Minute (outbox:publish --age=30)
+  - Prunes Historical Published Events Daily (outbox:prune --days=14)
 ```
 
 ---
@@ -55,6 +59,7 @@ Production builds utilize multi-stage minimal Dockerfiles:
 | **Shopify Gateway** | `shopify-app/Dockerfile.production` | `node:22-alpine` | Non-root `USER node`, multi-stage build, stripped devDependencies, healthcheck. |
 | **Laravel Backend** | `infrastructure/docker/php/Dockerfile.production` | `php:8.3-cli-alpine` | Non-root `USER www-data`, pre-compiled OPcache, stripped compiler tools, healthcheck. |
 | **Queue Worker** | `infrastructure/docker/php/Dockerfile.production` | `php:8.3-cli-alpine` | Dedicated worker process (`queue:work redis --queue=default,exports`). |
+| **Scheduler Daemon** | `infrastructure/docker/php/Dockerfile.production` | `php:8.3-cli-alpine` | Dedicated schedule worker (`schedule:work` or cron `* * * * * php artisan schedule:run`). |
 | **Ingress Proxy** | `infrastructure/docker/nginx/nginx.conf` | `nginx:alpine` | Gzip compression, rate limiting, Shopify CSP `frame-ancestors`. |
 
 ---
@@ -140,6 +145,7 @@ When deploying across multiple availability zones:
 1. **Task Definition 1 (Gateway):** Runs `shopify-app:latest` behind an Application Load Balancer target group probing `/healthz`.
 2. **Task Definition 2 (Backend API):** Runs `backend:latest` behind a private internal load balancer probing `/healthz`.
 3. **Task Definition 3 (Queue Workers):** Runs `laravel-worker:latest` with autoscaling configured against AWS CloudWatch Redis Queue metric (`ApproximateNumberOfMessages`).
+4. **Task Definition 4 (Scheduler Daemon):** Runs a single instance of `backend:latest` with command `php artisan schedule:work` (or an AWS EventBridge Cron rule executing `php artisan schedule:run` every minute on an ECS task).
 
 ---
 
@@ -189,3 +195,13 @@ When deploying across multiple availability zones:
     SELECT count(*) FROM shops WHERE shop_domain = 'purged-store.myshopify.com';
     ```
     Must return `0`.
+
+### 6.5 Automated Outbox Recovery & Retention Maintenance
+- The scheduler daemon executes recovery sweeps and table retention pruning:
+  - **Recovery Sweeper:** `php artisan outbox:publish --age=30 --limit=100` runs every minute (`* * * * *`). It claims stranded pending events older than 30 seconds via `FOR UPDATE SKIP LOCKED` and publishes them to Redis.
+  - **Retention Pruning:** `php artisan outbox:prune --days=14` runs daily at midnight (`0 0 * * *`) to purge published outbox rows older than 14 days in chunks of 500 records.
+  - **Operational Verification:**
+    ```bash
+    docker compose exec backend php artisan schedule:list
+    docker compose exec backend php artisan schedule:run
+    ```
