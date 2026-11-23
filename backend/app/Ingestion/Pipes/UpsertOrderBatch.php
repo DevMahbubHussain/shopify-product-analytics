@@ -36,20 +36,24 @@ final class UpsertOrderBatch
         $shopId = $context->shop()->id;
         $timezone = $context->shop()->timezone;
 
-        $incomingGids = array_map(fn (OrderData $o): string => (string) $o->gid, $batch->orders);
+        // Sort orders deterministically by shopify_order_gid to eliminate lock-order deadlocks
+        $orders = $batch->orders;
+        usort($orders, fn (OrderData $a, OrderData $b): int => strcmp((string) $a->gid, (string) $b->gid));
+
+        $incomingGids = array_map(fn (OrderData $o): string => (string) $o->gid, $orders);
         $preUpsertBuckets = $this->captureBucketsByOrderGids($shopId, $incomingGids, $timezone);
         $preExistingTimestamps = $this->captureOrderTimestampsByGids($shopId, $incomingGids);
 
-        $result = DB::transaction(function () use ($batch, $shopId, $timezone, $preUpsertBuckets, $preExistingTimestamps): array {
+        $result = DB::transaction(function () use ($orders, $shopId, $timezone, $preUpsertBuckets, $preExistingTimestamps): array {
             $orderIds = ($this->upsert)(
                 'orders',
-                array_map(fn (OrderData $o): array => $this->orderRow($shopId, $o), $batch->orders),
+                array_map(fn (OrderData $o): array => $this->orderRow($shopId, $o), $orders),
                 ['shop_id', 'shopify_order_gid'],
                 ['order_name', 'financial_status', 'fulfillment_status', 'currency_code', 'processed_at', 'cancelled_at', 'shopify_updated_at'],
                 freshnessColumn: 'shopify_updated_at',
             );
 
-            $writtenOrders = array_values(array_filter($batch->orders, fn (OrderData $o): bool => isset($orderIds[(string) $o->gid])));
+            $writtenOrders = array_values(array_filter($orders, fn (OrderData $o): bool => isset($orderIds[(string) $o->gid])));
 
             $this->pruneRemovedLineItems($shopId, $writtenOrders, $orderIds, $preExistingTimestamps);
 
@@ -132,6 +136,9 @@ final class UpsertOrderBatch
                 ];
             }
         }
+
+        // Sort line items deterministically by shopify_line_item_gid to eliminate lock-order deadlocks
+        usort($rows, fn (array $a, array $b): int => strcmp((string) $a['shopify_line_item_gid'], (string) $b['shopify_line_item_gid']));
 
         return $rows;
     }

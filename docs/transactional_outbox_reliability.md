@@ -1,6 +1,6 @@
 # Transactional Outbox Pattern & Queue Delivery Reliability
 
-Specification and architecture of the Transactional Outbox reliability engine for `shopify-product-analytics`: ensuring zero dropped domain events, guaranteed at-least-once metric aggregation dispatch, non-blocking multi-worker recovery locking, event schema versioning, retention pruning, and complete resilience against process crashes or Redis broker downtime during webhook and sync ingestion.
+Specification and architecture of the Transactional Outbox reliability engine for `shopify-product-analytics`: ensuring zero dropped domain events, guaranteed at-least-once metric aggregation dispatch, non-blocking multi-worker recovery locking, automated console scheduling, event schema versioning, retention pruning, deterministic lock ordering, and complete resilience against process crashes or Redis broker downtime during webhook and sync ingestion.
 
 ---
 
@@ -9,10 +9,12 @@ Specification and architecture of the Transactional Outbox reliability engine fo
 - **Dual-Write Hazard Elimination:** Resolves the distributed systems dual-write gap between PostgreSQL database commits and Redis queue dispatches.
 - **Atomic In-Transaction Recording:** Records pending domain events (`OrdersIngested`, `RefundsIngested`) in an `outbox_events` table inside the **exact same database transaction** that persists orders, line items, and refund records. If PostgreSQL commits, the event record is guaranteed to be saved.
 - **Fast-Path Immediate Publishing:** Normal HTTP requests publish domain events to Redis and immediately mark the specific outbox record as `published` (< 5ms) by UUID, adding zero perceivable latency to ingestion response times.
+- **Automated Task Scheduling (`routes/console.php`):** Configures `outbox:publish --age=30 --limit=100` to execute every minute and `outbox:prune --days=14` to execute daily via Laravel's native Console Scheduler, guarded with `withoutOverlapping()`.
+- **Deterministic Lock-Order Sorting:** Enforces strict alphabetical sorting by `shopify_order_gid` and `shopify_line_item_gid` before executing PostgreSQL batch upserts, eliminating lock-order inversion deadlocks (`40P01 deadlocks detected`) under concurrent webhook bursts.
 - **Multi-Worker Concurrency Locking (`FOR UPDATE SKIP LOCKED`):** The `php artisan outbox:publish` sweeper command claims pending records inside an atomic database transaction using PostgreSQL `FOR UPDATE SKIP LOCKED`. Concurrent sweeper instances process disjoint batches of stranded records without blocking, waiting, or re-publishing rows claimed by another worker.
 - **Event Schema Drift Versioning (`event_version`):** Adds an explicit `event_version` integer (default `1`) to `outbox_events` to safeguard event reconstitution contracts and maintain backward/forward compatibility as domain event schemas evolve.
-- **Automated Retention Management (`outbox:prune`):** Provides `php artisan outbox:prune --days=14 --chunk=500` to clean up old `published` records in high-performance chunks, while strictly preserving `pending` records and diagnostic history.
-- **Automated Stranded Event Recovery:** The `php artisan outbox:publish` command detects events that remained `pending` for longer than 30 seconds (caused by process crashes, Redis network drops, or container restarts), reconstructs the strongly-typed domain event, and pushes it to Redis.
+- **Automated Retention Management (`outbox:prune`):** Provides `php artisan outbox:prune --days=14 --chunk=500` to clean up old `published` records in high-performance chunks using PostgreSQL `ctid` physical tuple locator scans, while strictly preserving `pending` records and diagnostic history.
+- **Automated Stranded Event Recovery:** Detects events that remained `pending` for longer than 30 seconds (caused by process crashes, Redis network drops, or container restarts), reconstructs the strongly-typed domain event, and pushes it to Redis.
 - **Transactional Rollback Integrity:** If an ingestion batch fails validation or triggers a database deadlock/rollback, the outbox record is rolled back automatically, preventing phantom event dispatches.
 
 ---
@@ -52,37 +54,46 @@ Laravel Ingestion Pipeline:
   │
   ├── 2. UpsertOrderBatch / UpsertRefundBatch
   │       │
+  │       ├── Sort orders deterministically by shopify_order_gid
+  │       ├── Sort line items deterministically by shopify_line_item_gid
+  │       │
   │       ▼ [BEGIN DB::transaction]
-  │       ├── Write orders / order_line_items / refund_line_items
-  │       ├── Compute affected (product_id, metric_date) buckets
+  │       ├── Write orders / order_line_items / refund_line_items (GuardedUpsert with freshness check)
+  │       ├── Prune removed line items (if incoming updated_at > existing updated_at)
+  │       ├── Compute merged affected (product_id, metric_date) buckets
   │       ├── Insert pending outbox record:
   │       │     INSERT INTO outbox_events (id, shop_id, event_class, event_version, payload, status)
   │       │     VALUES (uuid7, shop_id, 'App\Events\OrdersIngested', 1, json, 'pending');
   │       ▼ [COMMIT DB::transaction] ──► Both Data AND Outbox Record are Persisted!
   │
   └── 3. DispatchIngestedEvents (Fast Path)
-          ├── event($event) ──► Pushes job to Redis queue
-          └── UPDATE outbox_events SET status = 'published', dispatched_at = now() WHERE id = :outbox_id;
+          ├── event($event) ──► QueueMetricAggregationsFromOrders ──► Pushes job to Redis queue
+          └── UPDATE outbox_events SET status = 'published', dispatched_at = now() 
+                WHERE id = :outbox_id AND status = 'pending';
 
 ─────────────────────────────────────────────────────────────────────────────────────────────
-RECOVERY SAFETY-NET (Multi-Worker Sweeper with SKIP LOCKED)
-Scheduled / Daemon: `php artisan outbox:publish --age=30`
+RECOVERY SAFETY-NET (Scheduled Console Sweeper with SKIP LOCKED)
+Every Minute: `Schedule::command('outbox:publish --age=30 --limit=100')->everyMinute()->withoutOverlapping()`
   ├── [BEGIN DB::transaction]
   ├── SELECT * FROM outbox_events 
   │     WHERE status = 'pending' AND created_at <= (now - 30s)
   │     ORDER BY created_at ASC LIMIT 100 
-  │     FOR UPDATE SKIP LOCKED; ──► Concurrent workers skip locked records without blocking!
+  │     FOR UPDATE SKIP LOCKED; ──► Concurrent sweepers skip locked records without blocking!
   ├── Reconstitutes: $event = OutboxService::reconstitute($record); (validates event_version)
   ├── event($event) ──► Re-pushes to Redis queue
-  ├── UPDATE outbox_events SET status = 'published', dispatched_at = now() WHERE id = :record_id;
+  ├── UPDATE outbox_events SET status = 'published', dispatched_at = now() 
+  │     WHERE id = :record_id AND status = 'pending';
   └── [COMMIT DB::transaction]
 
 ─────────────────────────────────────────────────────────────────────────────────────────────
 STORAGE RETENTION & CLEANUP (Daily Maintenance)
-Scheduled: `php artisan outbox:prune --days=14 --chunk=500`
+Daily: `Schedule::command('outbox:prune --days=14')->daily()->withoutOverlapping()`
   └── DELETE FROM outbox_events 
-        WHERE status = 'published' AND created_at <= (now - 14d) 
-        LIMIT 500; (Chunked loop via PostgreSQL ctid locator; pending rows strictly preserved)
+        WHERE ctid IN (
+            SELECT ctid FROM outbox_events 
+            WHERE status = 'published' AND created_at <= (now - 14d) 
+            LIMIT 500
+        ); (Chunked loop via PostgreSQL ctid locator; pending rows strictly preserved)
 ```
 
 ---
@@ -128,39 +139,46 @@ Foreign-key constraints:
 - **Role:** Database migration introducing `event_version` integer column (default `1`).
 - **Features:** Clean reversible schema evolution for forward-compatible payload contracts.
 
-### 3. `backend/app/Ingestion/Services/OutboxService.php`
+### 3. `backend/routes/console.php`
+- **Role:** Laravel Console routes and task scheduler definition.
+- **Features:** Registers `outbox:publish --age=30 --limit=100` (every minute) and `outbox:prune --days=14` (daily) with `withoutOverlapping()`.
+
+### 4. `backend/app/Ingestion/Services/OutboxService.php`
 - **Role:** Core service managing outbox operations.
 - **Methods:**
   - `record(string $shopId, object $event, int $eventVersion = 1): string`: Inserts pending outbox record with explicit versioning.
-  - `markPublished(string $outboxId): void`: Marks a record as published by exact UUID.
+  - `markPublished(string $outboxId): void`: Marks a record as published by exact UUID with `WHERE status = 'pending'`.
   - `getPendingStrandedEvents(DateTimeInterface $cutoff, int $limit = 100, bool $lock = false): Collection`: Queries stranded records with optional `FOR UPDATE SKIP LOCKED`.
   - `reconstitute(object $outboxRecord): object`: Rebuilds strongly-typed domain events from JSON payloads, validating `event_version`.
 
-### 4. `backend/app/Ingestion/Pipes/UpsertOrderBatch.php`
+### 5. `backend/app/Ingestion/Pipes/UpsertOrderBatch.php`
 - **Role:** Pipeline pipe for order ingestion.
-- **Changes:** Computes affected buckets, captures the outbox UUID from `OutboxService::record`, and pushes it to `$context->outboxIds`.
+- **Changes:** Enforces deterministic alphabetical sorting by `shopify_order_gid` and `shopify_line_item_gid`, captures outbox UUIDs, and prunes removed line items when newer order updates arrive.
 
-### 5. `backend/app/Ingestion/Pipes/UpsertRefundBatch.php`
+### 6. `backend/app/Ingestion/Pipes/UpsertRefundBatch.php`
 - **Role:** Pipeline pipe for refund ingestion.
-- **Changes:** Computes affected buckets, captures the outbox UUID from `OutboxService::record`, and pushes it to `$context->outboxIds`.
+- **Changes:** Computes affected buckets, captures outbox UUIDs inside the atomic `DB::transaction(...)`, and appends them to `$context->outboxIds`.
 
-### 6. `backend/app/Ingestion/Pipes/DispatchIngestedEvents.php`
+### 7. `backend/app/Ingestion/Pipes/DispatchIngestedEvents.php`
 - **Role:** Downstream pipeline pipe executing fast-path dispatch.
 - **Changes:** Fires `event($event)` and immediately updates the specific outbox records to `published` using their exact UUIDs `$context->outboxIds`. Never uses broad shop-wide queries that could hijack concurrent pending events.
 
-### 7. `backend/app/Console/Commands/PublishPendingOutboxEventsCommand.php`
+### 8. `backend/app/Console/Commands/PublishPendingOutboxEventsCommand.php`
 - **Role:** Artisan console recovery command (`php artisan outbox:publish`).
 - **Features:** Configurable `--age=30` threshold and `--limit=100` chunk size. Claims records inside an atomic `DB::transaction(...)` using `FOR UPDATE SKIP LOCKED`, preventing lock contention and duplicate worker execution.
 
-### 8. `backend/app/Console/Commands/PrunePublishedOutboxEventsCommand.php`
+### 9. `backend/app/Console/Commands/PrunePublishedOutboxEventsCommand.php`
 - **Role:** Artisan maintenance cleanup command (`php artisan outbox:prune`).
 - **Features:** Configurable `--days=14` retention window and `--chunk=500` chunk size. Safely cleans up expired `published` records using PostgreSQL `ctid` batch deletion while strictly preserving all `pending` and recent records.
 
-### 9. Feature & Unit Test Suites
+### 10. Feature & Integration Test Suites
+- `backend/tests/Feature/Console/OutboxScheduleTest.php`: Verifies console scheduler registrations, intervals, and overlapping guards.
+- `backend/tests/Feature/Ingestion/OrderSnapshotConcurrencyTest.php`: Tests snapshot preservation, stale update rejection, and reversed batch ordering.
+- `backend/tests/Feature/Ingestion/TransactionalOutboxEndToEndRecoveryTest.php`: End-to-end integration test verifying real queue dispatch, crash recovery, and duplicate replay idempotency.
 - `backend/tests/Feature/Ingestion/OutboxWorkerSkipLockedConcurrencyTest.php`: Tests that concurrent worker transactions claim disjoint event sets without blocking.
 - `backend/tests/Feature/Ingestion/OutboxEventVersioningTest.php`: Tests default and explicit version persistence and reconstitution validation.
 - `backend/tests/Feature/Ingestion/PrunePublishedOutboxEventsCommandTest.php`: Tests retention thresholds, chunked cleanup, and status isolation.
-- `backend/tests/Feature/Ingestion/OutboxConcurrencyTargetingTest.php`: Tests that fast-path publishing strictly targets the individual outbox UUID, never marking concurrent pending records as published.
+- `backend/tests/Feature/Ingestion/OutboxConcurrencyTargetingTest.php`: Tests that fast-path publishing strictly targets the individual outbox UUID.
 - `backend/tests/Feature/Ingestion/OutboxServiceTest.php`: Tests record, publish, query, and reconstitution contracts.
 - `backend/tests/Feature/Ingestion/TransactionalOutboxOrderIngestionTest.php`: Tests order batch atomic outbox recording and rollback integrity.
 - `backend/tests/Feature/Ingestion/TransactionalOutboxRefundIngestionTest.php`: Tests refund batch atomic outbox recording and rollback integrity.
@@ -174,26 +192,31 @@ Foreign-key constraints:
    If a worker container crashes between the database transaction commit and event dispatching, the pending outbox record remains in PostgreSQL and is safely recovered by `outbox:publish`.
 2. **Concurrent Request Race Protection (Single-ID Targeting):**
    Fast-path publishing marks records `published` strictly by their individual UUID (`WHERE id = :outboxId AND status = 'pending'`). Parallel requests for the same shop will never prematurely mark each other's pending outbox records as published.
-3. **Multi-Worker Contention (SKIP LOCKED):**
+3. **Lock-Order Deadlock Elimination:**
+   By sorting orders and line items deterministically prior to database insertion, concurrent transactions writing overlapping sets of orders acquire PostgreSQL row locks in identical sequence, eliminating lock-order inversion deadlocks (`40P01 deadlocks detected`).
+4. **Multi-Worker Contention (SKIP LOCKED):**
    When multiple recovery worker containers or crons run simultaneously, `FOR UPDATE SKIP LOCKED` guarantees each worker acquires a disjoint set of records without waiting on locks or re-publishing rows claimed by another worker.
-4. **Schema Evolution & Version Drift:**
+5. **Schema Evolution & Version Drift:**
    Future payload structure changes increment `event_version`. Old workers reject unknown future schemas fast rather than corrupting in-memory structures or calculations.
-5. **Transient Redis Down Time:**
+6. **Transient Redis Down Time:**
    If Redis connection drops during ingestion, the outbox record is already saved in PostgreSQL. Once Redis recovers, `outbox:publish` flushes all pending events without data loss.
-6. **Database Rollbacks & Constraint Failures:**
+7. **Database Rollbacks & Constraint Failures:**
    If an order or refund batch triggers a database constraint failure (e.g. invalid currency format, missing foreign key), the outbox write is rolled back with the transaction, preventing phantom event dispatch.
-7. **Idempotent Queue Replay:**
+8. **Idempotent Queue Replay:**
    Because downstream queue jobs (`AggregateProductDailyMetricsJob`) implement `ShouldBeUniqueUntilProcessing` and idempotent PostgreSQL upserts (`ON CONFLICT (shop_id, product_id, metric_date, currency_code) DO UPDATE`), re-publishing an outbox event produces 100% deterministic, mathematically identical results with zero duplicate rows.
-8. **Storage Retention & Safe Chunked Cleanup:**
+9. **Storage Retention & Safe Chunked Cleanup:**
    `outbox:prune` purges only expired `published` records in bounded chunks, preventing PostgreSQL table bloat while ensuring active or uncalculated events are never pruned.
 
 ---
 
 ## 7. Verification Evidence
 
-### Targeted Outbox Test Suites
+### Targeted Outbox & Recovery Test Suites
 ```bash
 docker compose exec backend ./vendor/bin/pest \
+  tests/Feature/Console/OutboxScheduleTest.php \
+  tests/Feature/Ingestion/OrderSnapshotConcurrencyTest.php \
+  tests/Feature/Ingestion/TransactionalOutboxEndToEndRecoveryTest.php \
   tests/Feature/Ingestion/OutboxWorkerSkipLockedConcurrencyTest.php \
   tests/Feature/Ingestion/OutboxEventVersioningTest.php \
   tests/Feature/Ingestion/PrunePublishedOutboxEventsCommandTest.php \
@@ -205,6 +228,9 @@ docker compose exec backend ./vendor/bin/pest \
 ```
 
 ```
+   PASS  Tests\Feature\Console\OutboxScheduleTest (1 test, 9 assertions)
+   PASS  Tests\Feature\Ingestion\OrderSnapshotConcurrencyTest (3 tests, 25 assertions)
+   PASS  Tests\Feature\Ingestion\TransactionalOutboxEndToEndRecoveryTest (3 tests, 34 assertions)
    PASS  Tests\Feature\Ingestion\OutboxWorkerSkipLockedConcurrencyTest (2 tests, 8 assertions)
    PASS  Tests\Feature\Ingestion\OutboxEventVersioningTest (4 tests, 14 assertions)
    PASS  Tests\Feature\Ingestion\PrunePublishedOutboxEventsCommandTest (3 tests, 13 assertions)
@@ -214,8 +240,8 @@ docker compose exec backend ./vendor/bin/pest \
    PASS  Tests\Feature\Ingestion\TransactionalOutboxOrderIngestionTest (2 tests, 12 assertions)
    PASS  Tests\Feature\Ingestion\TransactionalOutboxRefundIngestionTest (2 tests, 14 assertions)
 
-  Tests:    21 passed (107 assertions)
-  Duration: 1.02s
+  Tests:    28 passed (175 assertions)
+  Duration: 1.84s
 ```
 
 ### Full Backend Test Suite
@@ -223,8 +249,8 @@ docker compose exec backend ./vendor/bin/pest \
 docker compose exec backend ./vendor/bin/pest
 ```
 ```
-  Tests:    293 passed (3205 assertions)
-  Duration: 6.46s
+  Tests:    306 passed (3285 assertions)
+  Duration: 7.72s
 ```
 
 ### Shopify App Test Suite
@@ -236,5 +262,5 @@ cd shopify-app && npm test
 ℹ suites 9
 ℹ pass 168
 ℹ fail 0
-ℹ duration_ms 886.18ms
+ℹ duration_ms 872.87ms
 ```
