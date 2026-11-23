@@ -1,12 +1,12 @@
 # Concurrency, Retry & Idempotency Verification
 
-Comprehensive verification report and test specifications for transactional outbox retries, parent order row locking, out-of-order update protection, and duplicate delivery idempotency per **Constraint C2 (Strict Architectural Trust Boundary)**, **Constraint C5 (Security, Edge & Corner Case Protocol)**, **Constraint C6 (Probe, Don't Reason)**, and **Constraint C15 (Incremental Delivery)**.
+Comprehensive verification report and test specifications for transactional outbox retries, parent order row locking, out-of-order update protection, duplicate delivery idempotency, and the post-dispatch crash replay failure window per **Constraint C2 (Strict Architectural Trust Boundary)**, **Constraint C5 (Security, Edge & Corner Case Protocol)**, **Constraint C6 (Probe, Don't Reason)**, and **Constraint C15 (Incremental Delivery)**.
 
 ---
 
 ## 1. Executive Summary & Verification Matrix
 
-This suite provides verified proofs for four critical data integrity and reliability concerns in Shopify distributed ingestion pipelines:
+This suite provides verified proofs for five critical data integrity and reliability concerns in Shopify distributed ingestion pipelines:
 
 | Verification Scenario | Implementation Mechanism | Dedicated Test File | Status |
 |---|---|---|---|
@@ -14,6 +14,7 @@ This suite provides verified proofs for four critical data integrity and reliabi
 | **2. Retry Limit Exhaustion** | When `attempts >= 5`, `markAttemptFailed` transitions event to `failed`, clears `retry_after`, and halts future retries. | [`backend/tests/Feature/Ingestion/OutboxRetryTest.php`](file:///Users/th30/shopify-product-analytics/backend/tests/Feature/Ingestion/OutboxRetryTest.php) | **VERIFIED (PASSED)** |
 | **3. Duplicate Delivery & Zero Double-Counting** | Compound unique constraints (`orders_shop_gid_unique`, `refund_lines_shop_gid_unique`) deduplicate deliveries. Re-aggregation yields identical precomputed aggregates. | [`backend/tests/Feature/Analytics/OrderConcurrentUpdateTest.php`](file:///Users/th30/shopify-product-analytics/backend/tests/Feature/Analytics/OrderConcurrentUpdateTest.php)<br>[`backend/tests/Feature/Ingestion/RefundOutOfOrderUpdateTest.php`](file:///Users/th30/shopify-product-analytics/backend/tests/Feature/Ingestion/RefundOutOfOrderUpdateTest.php) | **VERIFIED (PASSED)** |
 | **4. Concurrent & Out-of-Order Updates** | PostgreSQL conditional update `WHERE excluded.shopify_updated_at >= table.shopify_updated_at` rejects stale payloads (`written = 0, skipped_stale = 1`). Parent orders locked via deterministic `lockForUpdate()`. | [`backend/tests/Feature/Analytics/OrderConcurrentUpdateTest.php`](file:///Users/th30/shopify-product-analytics/backend/tests/Feature/Analytics/OrderConcurrentUpdateTest.php)<br>[`backend/tests/Feature/Ingestion/RefundOutOfOrderUpdateTest.php`](file:///Users/th30/shopify-product-analytics/backend/tests/Feature/Ingestion/RefundOutOfOrderUpdateTest.php) | **VERIFIED (PASSED)** |
+| **5. Post-Dispatch / Pre-MarkPublished Crash Window** | When fast-path or sweeper dispatches to Redis and crashes before DB commit, recovery sweeper replays the event. Pure mathematical summation over raw rows guarantees idempotent convergence with zero double-counting. | [`backend/tests/Feature/Ingestion/OutboxDualDispatchCrashReplayTest.php`](file:///Users/th30/shopify-product-analytics/backend/tests/Feature/Ingestion/OutboxDualDispatchCrashReplayTest.php) | **VERIFIED (PASSED)** |
 
 ---
 
@@ -78,6 +79,23 @@ This suite provides verified proofs for four critical data integrity and reliabi
   3. **Deterministic Parent Order Locking:**
      - Both `UpsertOrderBatch` and `UpsertRefundBatch` sort parent IDs and execute `ORDER BY id/shopify_order_gid ASC lockForUpdate()` inside the active transaction before capturing pre-update buckets, completely eliminating concurrency deadlocks and snapshot skew.
 
+### Scenario 5: Post-Dispatch / Pre-MarkPublished Crash Failure Window
+- **Problem:** In an at-least-once transactional outbox architecture, a process may crash immediately after pushing the domain event to Redis, before the database update `status = 'published'` commits. The recovery sweeper will subsequently detect the event as stranded and replay the dispatch, queueing duplicate aggregation jobs.
+- **Verification Proof (`OutboxDualDispatchCrashReplayTest.php`):**
+  1. **Fast-Path Post-Dispatch Crash:**
+     - Fast-path dispatches `OrdersIngested` to Redis, but process crashes before `markPublished()` executes.
+     - PostgreSQL row remains `status = 'pending'`.
+     - Queue worker processes Job #1 from Redis: aggregates gross sales = $100.00, units = 2.
+     - Recovery sweeper (`outbox:publish`) detects stranded pending record, re-dispatches Job #2 to Redis, and marks `status = 'published'`.
+     - Queue worker processes Job #2 from Redis.
+     - Database metrics are inspected: **exactly $100.000000 gross sales, 2 units sold, 1 order count** (zero double-counting).
+  2. **Sweeper Post-Dispatch Crash:**
+     - Sweeper dispatches event, but crashes before `markPublished()` commits.
+     - Next sweeper cycle safely replays the dispatch and marks published.
+     - Sequential job executions converge to the identical canonical aggregate ($100.00 gross sales, 4 units).
+  3. **Concurrent Worker Lock Guard:**
+     - `AggregateProductDailyMetricsJob` enforces `WithoutOverlapping("metrics:{$shopId}:{$productId}:{$metricDate}")` with 120s expiration and 10s backoff, preventing concurrent execution races under worker contention.
+
 ---
 
 ## 3. Test Execution Commands
@@ -87,34 +105,22 @@ This suite provides verified proofs for four critical data integrity and reliabi
 docker compose exec backend ./vendor/bin/pest \
   tests/Feature/Ingestion/OutboxRetryTest.php \
   tests/Feature/Analytics/OrderConcurrentUpdateTest.php \
-  tests/Feature/Ingestion/RefundOutOfOrderUpdateTest.php
+  tests/Feature/Ingestion/RefundOutOfOrderUpdateTest.php \
+  tests/Feature/Ingestion/OutboxDualDispatchCrashReplayTest.php
 ```
 
 ```text
-   PASS  Tests\Feature\Ingestion\OutboxRetryTest
-  ✓ it retries pending outbox events with exponential backoff upon transient Redis broker failures (0.38s)
-  ✓ it transitions event status to failed and halts retries after exceeding retry threshold (5 attempts) (0.02s)
-  ✓ it isolates permanent poison pills immediately as failed without consuming retry attempts (0.02s)
-  ✓ it successfully publishes pending events once Redis broker recovers (0.02s)
+   PASS  Tests\Feature\Ingestion\OutboxRetryTest (4 passed)
+   PASS  Tests\Feature\Analytics\OrderConcurrentUpdateTest (4 passed)
+   PASS  Tests\Feature\Ingestion\RefundOutOfOrderUpdateTest (4 passed)
+   PASS  Tests\Feature\Ingestion\OutboxDualDispatchCrashReplayTest (3 passed)
 
-   PASS  Tests\Feature\Analytics\OrderConcurrentUpdateTest
-  ✓ it acquires deterministic row locks in GID order to prevent concurrency deadlocks (0.42s)
-  ✓ it rejects out-of-order order updates preserving newer data and suppressing outbox events (0.03s)
-  ✓ it guarantees duplicate order webhook deliveries never duplicate rows or double-count daily metrics (0.04s)
-  ✓ it accurately recalculates both buckets when an order is updated across calendar dates (0.04s)
-
-   PASS  Tests\Feature\Ingestion\RefundOutOfOrderUpdateTest
-  ✓ it rejects out-of-order refund updates preventing older data from overwriting newer records (0.46s)
-  ✓ it guarantees duplicate refund webhook deliveries never duplicate rows or double-count refunded metrics (0.04s)
-  ✓ it isolates mixed batches applying fresh refund lines while discarding stale lines (0.04s)
-  ✓ it enforces monotonic ordering using processed_at when shopify_updated_at is absent (0.03s)
-
-  Tests:    12 passed (128 assertions)
-  Duration: 1.84s
+  Tests:    15 passed (158 assertions)
+  Duration: 1.48s
 ```
 
 ### Full Backend Verification
 ```bash
 docker compose exec backend ./vendor/bin/pest
 ```
-All **326 tests pass (3,535 assertions)** across the entire backend suite.
+All **329 tests pass (3,565 assertions)** across the entire backend suite.
