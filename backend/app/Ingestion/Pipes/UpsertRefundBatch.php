@@ -65,18 +65,32 @@ final class UpsertRefundBatch
                     'refunded_subtotal' => $l->subtotal,
                     'currency_code' => $l->currencyCode,
                     'processed_at' => $l->processedAt,
+                    'shopify_updated_at' => $l->shopifyUpdatedAt ?? $l->processedAt,
                 ], $batch->lines),
                 ['shop_id', 'shopify_refund_line_item_gid'],
-                ['order_id', 'line_item_id', 'shopify_refund_gid', 'refunded_quantity', 'refunded_subtotal', 'currency_code', 'processed_at'],
+                [
+                    'order_id',
+                    'line_item_id',
+                    'shopify_refund_gid',
+                    'refunded_quantity',
+                    'refunded_subtotal',
+                    'currency_code',
+                    'processed_at',
+                    'shopify_updated_at',
+                ],
+                freshnessColumn: 'shopify_updated_at',
             );
 
             if ($written === []) {
                 return ['written_count' => 0, 'event' => null, 'outbox_id' => null];
             }
 
-            $postUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
+            $writtenGids = array_flip(array_keys($written));
+            $writtenLines = array_values(array_filter($batch->lines, fn (RefundLineData $l): bool => isset($writtenGids[(string) $l->refundLineItemGid])));
+
+            $postUpsertBuckets = $this->captureBucketsByRefundGids($shopId, array_keys($written), $timezone);
             $affectedBuckets = $this->mergeBuckets($preUpsertBuckets, $postUpsertBuckets);
-            $affectedOrderIds = array_values(array_unique(array_map(fn (RefundLineData $l): string => $orderIds[(string) $l->orderGid], $batch->lines)));
+            $affectedOrderIds = array_values(array_unique(array_map(fn (RefundLineData $l): string => $orderIds[(string) $l->orderGid], $writtenLines)));
 
             $event = new RefundsIngested($shopId, $affectedOrderIds, $affectedBuckets);
             $outboxId = $this->outboxService->record($shopId, $event);

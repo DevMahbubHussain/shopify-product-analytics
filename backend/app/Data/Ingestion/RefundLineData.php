@@ -20,12 +20,16 @@ final readonly class RefundLineData
         public DecimalAmount $subtotal,
         public string $currencyCode,
         public ?CarbonImmutable $processedAt,
+        public ?CarbonImmutable $shopifyUpdatedAt = null,
     ) {
     }
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self
     {
+        $processedAt = IngestionRules::toUtc($data['processed_at'] ?? null);
+        $shopifyUpdatedAt = IngestionRules::toUtc($data['shopify_updated_at'] ?? null) ?? $processedAt;
+
         return new self(
             ShopifyGid::parse($data['refund_gid'], 'Refund'),
             ShopifyGid::parse($data['refund_line_item_gid'], 'RefundLineItem'),
@@ -34,7 +38,8 @@ final readonly class RefundLineData
             (int) $data['quantity'],
             DecimalAmount::parse($data['subtotal']),
             $data['currency_code'],
-            IngestionRules::toUtc($data['processed_at'] ?? null),
+            $processedAt,
+            $shopifyUpdatedAt,
         );
     }
 }

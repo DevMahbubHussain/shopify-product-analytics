@@ -51,6 +51,7 @@ export interface ShopifyWebhookRefundPayload {
   readonly currency?: string;
   readonly created_at?: string | null;
   readonly processed_at?: string | null;
+  readonly updated_at?: string | null;
   readonly refund_line_items?: readonly ShopifyWebhookRefundLineItem[];
 }
 
@@ -176,6 +177,8 @@ export async function handleRefundWebhook(
     const orderGid = `gid://shopify/Order/${data.order_id}`;
     const processedAt =
       data.processed_at || data.created_at || new Date().toISOString();
+    const shopifyUpdatedAt =
+      data.updated_at || data.processed_at || data.created_at || processedAt;
     const currency = data.currency || "USD";
 
     const rawRefundLines = data.refund_line_items || [];
@@ -195,6 +198,7 @@ export async function handleRefundWebhook(
         subtotal: formatDecimal6(item.subtotal),
         currency_code: currency,
         processed_at: processedAt,
+        shopify_updated_at: shopifyUpdatedAt,
       };
     });
 

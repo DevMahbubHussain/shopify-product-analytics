@@ -164,6 +164,7 @@ describe("handleRefundWebhook", () => {
           subtotal: "49.950000",
           currency_code: "USD",
           processed_at: "2026-11-18T11:00:00Z",
+          shopify_updated_at: "2026-11-18T11:00:00Z",
         },
       ],
     });

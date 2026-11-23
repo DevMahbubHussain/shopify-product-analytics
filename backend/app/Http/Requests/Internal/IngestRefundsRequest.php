@@ -22,6 +22,7 @@ final class IngestRefundsRequest extends IngestionRequest
             'refund_lines.*.subtotal' => IngestionRules::amount(),
             'refund_lines.*.currency_code' => IngestionRules::currency(),
             'refund_lines.*.processed_at' => IngestionRules::timestamp(required: false),
+            'refund_lines.*.shopify_updated_at' => IngestionRules::timestamp(required: false),
         ];
     }
 

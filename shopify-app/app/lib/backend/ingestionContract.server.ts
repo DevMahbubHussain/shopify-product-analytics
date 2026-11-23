@@ -90,6 +90,7 @@ export interface RefundLinePayload {
   subtotal: string;
   currency_code: string;
   processed_at: string | null;
+  shopify_updated_at?: string | null;
 }
 
 export interface ProductBatchBody {

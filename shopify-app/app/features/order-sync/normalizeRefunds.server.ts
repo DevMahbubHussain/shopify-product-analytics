@@ -34,6 +34,7 @@ function refundLines(
   order: ShopifyOrderNode,
 ): RefundLinePayload[] {
   const processedAt = refund.createdAt ?? refund.updatedAt;
+  const shopifyUpdatedAt = refund.updatedAt ?? refund.createdAt ?? processedAt;
   return refund.refundLineItems.nodes.flatMap((line) =>
     line.id === null
       ? []
@@ -47,6 +48,7 @@ function refundLines(
             subtotal: shopAmount(line.subtotalSet, order),
             currency_code: order.currencyCode,
             processed_at: processedAt,
+            shopify_updated_at: shopifyUpdatedAt,
           },
         ],
   );

@@ -87,6 +87,7 @@ test("maps order #1003's full refund to two refund lines", () => {
         subtotal: "24.95",
         currency_code: "USD",
         processed_at: "2026-11-18T11:05:00Z",
+        shopify_updated_at: "2026-11-18T11:05:02Z",
       },
       {
         refund_gid: "gid://shopify/Refund/1003411669040",
@@ -97,10 +98,19 @@ test("maps order #1003's full refund to two refund lines", () => {
         subtotal: "49.95",
         currency_code: "USD",
         processed_at: "2026-11-18T11:05:00Z",
+        shopify_updated_at: "2026-11-18T11:05:02Z",
       },
     ],
     skippedWithoutId: 0,
   });
+});
+
+test("extracts shopify_updated_at from refund.updatedAt", () => {
+  const result = normalizeRefunds(
+    order([refund({ updatedAt: "2026-11-18T12:00:00Z" })]),
+  );
+
+  assert.equal(result.lines[0]?.shopify_updated_at, "2026-11-18T12:00:00Z");
 });
 
 test("uses the refund update time when its creation time is missing", () => {
