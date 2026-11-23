@@ -43,6 +43,8 @@ final class UpsertOrderBatch
         $incomingGids = array_map(fn (OrderData $o): string => (string) $o->gid, $orders);
 
         $result = DB::transaction(function () use ($orders, $shopId, $timezone, $incomingGids): array {
+            $this->lockExistingOrders($shopId, $incomingGids);
+
             $preUpsertBuckets = $this->captureBucketsByOrderGids($shopId, $incomingGids, $timezone);
             $preExistingTimestamps = $this->captureOrderTimestampsByGids($shopId, $incomingGids);
 
@@ -186,6 +188,23 @@ final class UpsertOrderBatch
         }
 
         $query->delete();
+    }
+
+    /**
+     * @param list<string> $incomingGids
+     */
+    private function lockExistingOrders(string $shopId, array $incomingGids): void
+    {
+        if ($incomingGids === []) {
+            return;
+        }
+
+        DB::table('orders')
+            ->where('shop_id', $shopId)
+            ->whereIn('shopify_order_gid', $incomingGids)
+            ->orderBy('shopify_order_gid', 'asc')
+            ->lockForUpdate()
+            ->pluck('id');
     }
 
     /**

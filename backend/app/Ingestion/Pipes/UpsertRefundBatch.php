@@ -49,6 +49,8 @@ final class UpsertRefundBatch
             $lineItemIds,
             $incomingRefundGids
         ): array {
+            $this->lockParentOrders($shopId, array_values($orderIds));
+
             $preUpsertBuckets = $this->captureBucketsByRefundGids($shopId, $incomingRefundGids, $timezone);
 
             $written = ($this->upsert)(
@@ -107,6 +109,26 @@ final class UpsertRefundBatch
 
             throw new MissingOrders($missing);
         }
+    }
+
+    /**
+     * @param list<string> $orderIds
+     */
+    private function lockParentOrders(string $shopId, array $orderIds): void
+    {
+        if ($orderIds === []) {
+            return;
+        }
+
+        $uniqueIds = array_values(array_unique($orderIds));
+        sort($uniqueIds);
+
+        DB::table('orders')
+            ->where('shop_id', $shopId)
+            ->whereIn('id', $uniqueIds)
+            ->orderBy('id', 'asc')
+            ->lockForUpdate()
+            ->pluck('id');
     }
 
     /**

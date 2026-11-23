@@ -48,9 +48,14 @@ final class PublishPendingOutboxEventsCommand extends Command
                     event($event);
                     $outboxService->markPublished($record->id);
                     $publishedCount++;
+                } catch (\InvalidArgumentException $e) {
+                    // Permanent failure (unsupported schema or corrupt payload): isolate immediately
+                    $this->error("Permanent outbox failure [{$record->id}]: {$e->getMessage()}");
+                    $outboxService->markPermanentFailure($record->id, $e->getMessage());
                 } catch (Throwable $e) {
-                    $this->error("Failed to publish outbox event [{$record->id}]: {$e->getMessage()}");
-                    $outboxService->markFailed($record->id);
+                    // Transient failure (broker timeout or connection error): backoff with exponential retry
+                    $this->error("Transient outbox dispatch failure [{$record->id}]: {$e->getMessage()}");
+                    $outboxService->markAttemptFailed($record->id, $e->getMessage(), maxAttempts: 5);
                 }
             }
         }, 5);

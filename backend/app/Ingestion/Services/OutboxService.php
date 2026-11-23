@@ -57,19 +57,54 @@ final class OutboxService
     /**
      * Marks an unrecoverable outbox event as failed so it does not block future runs.
      */
-    public function markFailed(string $outboxId): void
+    public function markFailed(string $outboxId, string $error = 'Failed permanently'): void
+    {
+        $this->markPermanentFailure($outboxId, $error);
+    }
+
+    /**
+     * Marks an unrecoverable outbox event as failed immediately with error audit.
+     */
+    public function markPermanentFailure(string $outboxId, string $error): void
     {
         DB::table('outbox_events')
             ->where('id', $outboxId)
             ->where('status', 'pending')
             ->update([
                 'status' => 'failed',
+                'last_error' => Str::limit($error, 1000),
                 'updated_at' => now(),
             ]);
     }
 
     /**
-     * Retrieves stranded pending events that were not published within the expected cutoff.
+     * Records a failed dispatch attempt with exponential backoff, failing only when maxAttempts is reached.
+     */
+    public function markAttemptFailed(string $outboxId, string $error, int $maxAttempts = 5): void
+    {
+        $record = DB::table('outbox_events')->where('id', $outboxId)->first(['id', 'attempts', 'status']);
+        if ($record === null || $record->status !== 'pending') {
+            return;
+        }
+
+        $newAttempts = (int) $record->attempts + 1;
+        $isExhausted = $newAttempts >= $maxAttempts;
+        $backoffSeconds = (int) (pow(2, min($newAttempts, 6)) * 5);
+
+        DB::table('outbox_events')
+            ->where('id', $outboxId)
+            ->update([
+                'attempts' => $newAttempts,
+                'status' => $isExhausted ? 'failed' : 'pending',
+                'retry_after' => $isExhausted ? null : now()->addSeconds($backoffSeconds),
+                'last_error' => Str::limit($error, 1000),
+                'updated_at' => now(),
+            ]);
+    }
+
+    /**
+     * Retrieves stranded pending events that were not published within the expected cutoff
+     * and whose retry_after backoff threshold (if any) has elapsed.
      * When $lock is true, acquires row locks using FOR UPDATE SKIP LOCKED for concurrent worker safety.
      *
      * @return Collection<int, object>
@@ -79,9 +114,14 @@ final class OutboxService
         int $limit = 100,
         bool $lock = false
     ): Collection {
+        $now = now();
         $query = DB::table('outbox_events')
             ->where('status', 'pending')
             ->where('created_at', '<=', $cutoff)
+            ->where(function ($q) use ($now): void {
+                $q->whereNull('retry_after')
+                    ->orWhere('retry_after', '<=', $now);
+            })
             ->orderBy('created_at', 'asc')
             ->limit($limit);
 

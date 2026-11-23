@@ -115,8 +115,15 @@ final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniq
             ])
             ->get();
 
+        $historicalCurrencies = DB::table('product_daily_metrics')
+            ->where('shop_id', $this->shopId)
+            ->where('product_id', $this->productId)
+            ->where('metric_date', $this->metricDate)
+            ->pluck('currency_code');
+
         $currencies = $orderLines->pluck('currency_code')
             ->merge($refundLines->pluck('currency_code'))
+            ->merge($historicalCurrencies)
             ->unique()
             ->values();
 
