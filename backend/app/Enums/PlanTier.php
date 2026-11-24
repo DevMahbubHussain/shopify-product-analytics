@@ -32,4 +32,28 @@ enum PlanTier: string
             self::Pro => true,
         };
     }
+
+    public function canUseMcp(): bool
+    {
+        return match ($this) {
+            self::Free => false,
+            self::Pro => true,
+        };
+    }
+
+    public function mcpRateLimitPerMinute(): int
+    {
+        return match ($this) {
+            self::Free => 0,
+            self::Pro => 60,
+        };
+    }
+
+    public function mcpRateLimitPerHour(): int
+    {
+        return match ($this) {
+            self::Free => 0,
+            self::Pro => 600,
+        };
+    }
 }

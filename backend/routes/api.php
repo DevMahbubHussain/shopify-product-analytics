@@ -8,6 +8,8 @@ use App\Http\Controllers\Analytics\ProductPerformanceController;
 use App\Http\Controllers\Analytics\SalesTrendController;
 use App\Http\Controllers\Exports\ProductExportController;
 use App\Http\Controllers\Internal\IngestionController;
+use App\Http\Controllers\Internal\McpConsentController;
+use App\Http\Controllers\Internal\McpTokenController;
 use App\Http\Controllers\Internal\SubscriptionStatusController;
 use App\Http\Controllers\Internal\SyncStatusController;
 use Illuminate\Http\JsonResponse;
@@ -106,6 +108,18 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(
         Route::prefix('sync')->controller(SyncStatusController::class)->group(
             function (): void {
                 Route::get('status', 'show');
+            }
+        );
+
+        Route::prefix('mcp')->group(
+            function (): void {
+                Route::get('status', [McpConsentController::class, 'status']);
+                Route::post('consent', [McpConsentController::class, 'grant']);
+                Route::delete('consent', [McpConsentController::class, 'withdraw']);
+
+                Route::get('connections', [McpTokenController::class, 'index']);
+                Route::post('tokens', [McpTokenController::class, 'store']);
+                Route::delete('connections/{id}', [McpTokenController::class, 'destroy'])->whereUuid('id');
             }
         );
 

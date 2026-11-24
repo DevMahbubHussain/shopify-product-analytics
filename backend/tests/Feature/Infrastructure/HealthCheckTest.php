@@ -34,7 +34,9 @@ it('returns 200 and healthy status on /api/v1/health when all services are conne
 });
 
 it('returns 503 and degraded status when database is unreachable', function (): void {
-    DB::shouldReceive('connection->getPdo')
+    // DB::partialMock prevents teardown exceptions when Laravel calls getConnections()
+    DB::partialMock()
+        ->shouldReceive('connection->getPdo')
         ->once()
         ->andThrow(new \PDOException('Database connection refused'));
 
