@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 namespace App\Mcp\Servers;
 
+use App\Mcp\Tools\FindHighRefundProductsTool;
+use App\Mcp\Tools\GetAnalyticsOverviewTool;
+use App\Mcp\Tools\GetProductAnalyticsTool;
+use App\Mcp\Tools\GetSalesTrendTool;
+use App\Mcp\Tools\GetSyncStatusTool;
+use App\Mcp\Tools\ListProductPerformanceTool;
 use Laravel\Mcp\Server;
 use Laravel\Mcp\Server\Attributes\Instructions;
 use Laravel\Mcp\Server\Attributes\Name;
@@ -17,7 +23,14 @@ final class AnalyticsServer extends Server
     /**
      * @var array<int, class-string>
      */
-    protected array $tools = [];
+    protected array $tools = [
+        GetSyncStatusTool::class,
+        GetAnalyticsOverviewTool::class,
+        ListProductPerformanceTool::class,
+        GetProductAnalyticsTool::class,
+        GetSalesTrendTool::class,
+        FindHighRefundProductsTool::class,
+    ];
 
     /**
      * @var array<int, class-string>
