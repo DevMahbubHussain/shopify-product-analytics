@@ -23,7 +23,11 @@ export interface SyncStatusBody {
   cursor_metadata?: Record<string, unknown> | null;
   error_code?: string | null;
   error_summary?: string | null;
+  history_notice?: string | null;
 }
+
+/** Matches the default order window in harvestOrders.server.ts. */
+export const ORDER_HISTORY_NOTICE = "Order history limited to the last 60 days.";
 
 export interface SyncStatusResponse {
   sync_run_id: string;
@@ -88,6 +92,7 @@ export async function runHistoricalSync({
       cursor_metadata: {
         window_start: windowStart,
       },
+      history_notice: ORDER_HISTORY_NOTICE,
     },
   );
   const syncRunId = initialRun.sync_run_id;

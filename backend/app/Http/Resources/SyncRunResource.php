@@ -30,6 +30,7 @@ final class SyncRunResource extends JsonResource
             'started_at' => $run->started_at?->toISOString(),
             'completed_at' => $run->completed_at?->toISOString(),
             'error_code' => $run->error_code,
+            'history_notice' => $run->history_notice,
             'last_activity_at' => $run->updated_at?->toISOString(),
         ];
     }

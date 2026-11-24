@@ -19,6 +19,7 @@ final readonly class SyncStatusData
         public ?array $cursorMetadata,
         public ?string $errorCode,
         public ?string $errorSummary,
+        public ?string $historyNotice,
     ) {
     }
 
@@ -34,6 +35,7 @@ final readonly class SyncStatusData
             $data['cursor_metadata'] ?? null,
             $data['error_code'] ?? null,
             $data['error_summary'] ?? null,
+            $data['history_notice'] ?? null,
         );
     }
 }

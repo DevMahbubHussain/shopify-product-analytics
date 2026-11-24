@@ -23,6 +23,7 @@ final class ReportSyncStatusRequest extends IngestionRequest
             'cursor_metadata' => ['nullable', 'array'],
             'error_code' => ['required_if:status,failed', 'nullable', 'string', 'max:64'],
             'error_summary' => ['nullable', 'string', 'max:2000'],
+            'history_notice' => ['nullable', 'string', 'max:255'],
         ];
     }
 
