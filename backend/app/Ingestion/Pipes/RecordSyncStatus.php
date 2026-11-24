@@ -97,6 +97,7 @@ final class RecordSyncStatus
             'cursor_metadata' => $data->cursorMetadata,
             'error_code' => $data->errorCode,
             'error_summary' => $data->errorSummary,
+            'history_notice' => $data->historyNotice,
         ], fn (mixed $value): bool => $value !== null);
 
         if ($data->status !== SyncRunStatus::Pending && $run?->started_at === null) {

@@ -30,6 +30,8 @@ Binding engineering rules live in `AGENTS.md` and are imported verbatim below. T
 | `docs/refund_freshness_guard.md` | Refund freshness guards (`shopify_updated_at`), out-of-order webhook rejection (`skipped_stale = 1`), recalculation suppression | Refund ingestion, webhooks |
 | `docs/concurrency_retry_and_idempotency_verification.md` | Concurrency row locking (`lockForUpdate`), exponential retry backoff, dual-dispatch crash replay idempotency | Ingestion concurrency, outbox sweeper |
 | `docs/performance_and_memory_benchmarks.md` | Batch limits (50 orders/250 lines), sub-50ms reads, O(1) query complexity, natural index plans, engine heap memory | Performance & scale testing |
+| `PRD/MCP-PRD.md` (gitignored, local only) | MCP server & AI integration PRD v2.1, platform-neutral core (§9.7) | MCP work, tenant lifecycle events |
+| `docs/platform-neutral-core.md` | `shops.platform`, `TenantDeactivated` / `TenantPurgeRequested`, `history_notice` seams | Lifecycle, sync status, any platform-specific code |
 | `README.md` | Local setup (Colima + Docker), S2S handshake probe | Environment setup |
 
 Precedence on conflict: `AGENTS.md` > `PRD/PRD.md` > `docs/system-design.html` > `README.md`. Surface any conflict to the user instead of silently picking one.
@@ -165,9 +167,9 @@ Entitlements enforced server-side in Laravel; frontend flags never unlock featur
 
 ---
 
-## 7. Current Repository State (verified 2026-11-23)
+## 7. Current Repository State (verified 2026-11-24)
 
-Steps 1, 2, and 3 are complete and merged to `main`. Steps 4 (Analytics Engine & Queues) and 5 (Laravel Analytics REST API) are complete on branch `analytics-engine`.
+Steps 1–7 are complete and merged to `main` (release `v1`). Platform-neutral core seams (MCP PRD v2.1 §9.7, levels A + B) are merged on top as groundwork for the MCP server; the MCP server itself is not built yet.
 
 | Area | Actual state |
 |---|---|
@@ -181,9 +183,10 @@ Steps 1, 2, and 3 are complete and merged to `main`. Steps 4 (Analytics Engine &
 | Sync & Ingestion | Product & order/refund crawler with cursor pagination, rate throttling, 60-day window, chunked delivery, stalled run recovery, and auto-polling UI in `shopify-app/app/routes/app._index.tsx`. Specs: `docs/shopify-harvester.md`, `docs/sync-orchestration.md` |
 | Queue & Aggregation | Queue connection `redis` via `laravel-worker`. Events `OrdersIngested` and `RefundsIngested` carry `affectedBuckets` (pre/post update buckets); queued aggregation jobs `AggregateProductDailyMetricsJob` with `ShouldBeUniqueUntilProcessing`, `WithoutOverlapping(releaseAfter: 10, expireAfter: 120)`, retries ($tries = 5, backoff [5, 15, 60]), half-open intervals `[startOfDayUtc, startOfNextDayUtc)`, and multi-currency staleness zeroing. Transactional Outbox ensures zero event loss with sweeper command `outbox:publish`, exponential backoff ($2^{\min(\text{attempts}, 6)} \times 5\text{s}$), poison-pill isolation, and dual-dispatch replay convergence. Specs: `docs/analytics-engine.md`, `docs/half_open_day_boundary.md`, `docs/metrics_recalculation_on_updates.md`, `docs/job_concurrency_and_lost_updates.md`, `docs/transactional_outbox_reliability.md`, `docs/concurrency_retry_and_idempotency_verification.md` |
 | Analytics REST API | `/api/v1/analytics/overview` (summary cards + comparisons), `/api/v1/analytics/sales-trend` (time-series with zero gap-filling), `/api/v1/products` (paginated performance ranking), `/api/v1/products/{id}/analytics`, `/api/v1/products/{id}/variants/analytics`. Sub-50ms reads on precomputed `product_daily_metrics`. |
-| Tests | Backend: 329 Pest tests (3,565 assertions) under `backend/tests/{Feature,Unit}/{Security,Database,Ingestion,Infrastructure,Sync,Analytics,Performance}`. Gateway: 169 tests next to their files under `shopify-app/app/` (`*.test.ts`) via `npm test` (`node --test`), plus clean strict TypeScript check (`tsc --noEmit`). Total 498 automated tests across all test suites. All green. |
+| Tests | `tests/TestCase.php` flushes test Redis DB 2 before every test (guarded to DB 2 + `spa-test-database-` prefix), because `throttleWithRedis()` keeps rate-limit counters on the default Redis connection, not the `array` cache store. Backend: 355 Pest tests (3,727 assertions) under `backend/tests/{Feature,Unit}/{Security,Database,Ingestion,Infrastructure,Sync,Analytics,Performance}`. Gateway: 170 tests next to their files under `shopify-app/app/` (`*.test.ts`) via `npm test` (`node --test`), plus clean strict TypeScript check (`tsc --noEmit`). Total 525 unit/feature tests, plus the Playwright E2E suite. All green. |
+| Platform-neutral seams | `shops.platform` (`App\Enums\Platform`, default `shopify`); domain events `TenantDeactivated` (after commit, from `MarkShopUninstalled`) and `TenantPurgeRequested` (inside the purge transaction, from `TenantPurgeService`; listeners must be synchronous and idempotent); gateway-supplied `sync_runs.history_notice` returned by `GET /internal/v1/sync/status`. No listeners yet. Spec: `docs/platform-neutral-core.md` |
 | shopify-app | Official React Router template (`@shopify/shopify-app-react-router` 4.x), Admin API `2026-10`, Polaris web components, Prisma sessions in Postgres `shopify_sessions`. Runs on host via `shopify app dev --config local`; optional container under compose profile `app`. |
-| Migrations | 11 domain tables + microsecond `timestamptz(6)` precision + Laravel cache/jobs/failed_jobs tables + `shopify_updated_at` on `refund_line_items` + `attempts`/`retry_after` on `outbox_events` (16 migrations total); specs in `docs/migrations.md`, `docs/half_open_day_boundary.md`, `docs/transactional_outbox_reliability.md`, `docs/refund_freshness_guard.md` |
+| Migrations | 11 domain tables + microsecond `timestamptz(6)` precision + Laravel cache/jobs/failed_jobs tables + `shopify_updated_at` on `refund_line_items` + `attempts`/`retry_after` on `outbox_events` + `platform` on `shops` + `history_notice` on `sync_runs` (18 project migrations + 3 Laravel framework migrations, 21 total); specs in `docs/migrations.md`, `docs/half_open_day_boundary.md`, `docs/transactional_outbox_reliability.md`, `docs/refund_freshness_guard.md` |
 | Ingestion | `POST /internal/v1/ingestion/{shop,shop-uninstall,products,products-delete,orders,refunds,webhook-events,sync-status}` and `GET /internal/v1/sync/status` via `IngestionController` / `SyncStatusController` → `Illuminate\Pipeline` pipes in `app/Ingestion/Pipes` with deterministic parent row locking (`ORDER BY id ASC lockForUpdate()`), conditional freshness guard (`ON CONFLICT DO UPDATE WHERE excluded.shopify_updated_at >= refund_line_items.shopify_updated_at`), stale rejection (`skipped_stale = 1`), and atomic Transactional Outbox persistence; contract in `docs/ingestion-api.md`, `docs/refund_freshness_guard.md` |
 | Ingestion internals | FormRequest → readonly DTO (`app/Data/Ingestion`) → pipes; `GuardedUpsert` (ON CONFLICT with `shopify_updated_at` freshness guard), `TenantIdLookup`; VOs `ShopifyGid`, `DecimalAmount`; enums in `app/Enums` |
 | strict_types | Present in every PHP file under `backend/` (excluding `vendor/`) |
@@ -195,6 +198,7 @@ Binding rules live in `AGENTS.md` §2.1–2.5 (imported above): env files and se
 - Worker command uses `--tries=3`; jobs must still declare `$tries = 5` per C9.3 (job property wins).
 - Do not use `authenticate.webhook` for webhooks that can arrive after uninstall (`app/uninstalled`, `shop/redact`, other privacy topics): with expiring offline tokens it tries a refresh, Shopify refuses it, and the library answers 500 before handler code runs. Use `verifyShopifyWebhook`.
 - A store that installs but never opens the app is unknown to Laravel (`afterAuth` runs on first open); its uninstall gets 404 and is acknowledged.
+- The 60-day order window is duplicated in `ORDER_HISTORY_NOTICE` (`syncOrchestrator.server.ts`) and the literal in `harvestOrders.server.ts`; change both together.
 
 ## 8. Open Product Decisions (PRD §19)
 

@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property SyncRunStatus $status
  * @property int $records_received
  * @property int $records_processed
+ * @property string|null $history_notice
  */
 final class SyncRun extends Model
 {
@@ -23,7 +24,7 @@ final class SyncRun extends Model
 
     protected $fillable = [
         'shop_id', 'sync_type', 'status', 'started_at', 'completed_at', 'cursor_metadata',
-        'records_received', 'records_processed', 'error_code', 'error_summary',
+        'records_received', 'records_processed', 'error_code', 'error_summary', 'history_notice',
     ];
 
     /** @return array<string, string> */

@@ -153,6 +153,43 @@ describe('sync status', function (): void {
         expect($oldRun->status)->toBe('failed')
             ->and($oldRun->error_code)->toBe('STALLED');
     });
+
+    it('stores the gateway history notice when a run starts', function (): void {
+        s2sPost('/internal/v1/ingestion/sync-status', [
+            'sync_type' => 'initial', 'status' => 'running', 'history_notice' => 'Order history limited to the last 60 days.',
+        ])->assertCreated();
+
+        expect(DB::table('sync_runs')->value('history_notice'))->toBe('Order history limited to the last 60 days.');
+    });
+
+    it('keeps the history notice when an update omits it and replaces it when one is sent', function (): void {
+        $id = s2sPost('/internal/v1/ingestion/sync-status', [
+            'sync_type' => 'initial', 'status' => 'running', 'history_notice' => 'First notice.',
+        ])->json('sync_run_id');
+
+        s2sPost('/internal/v1/ingestion/sync-status', ['sync_run_id' => $id, 'status' => 'running', 'records_received' => 10])->assertOk();
+        expect(DB::table('sync_runs')->value('history_notice'))->toBe('First notice.');
+
+        s2sPost('/internal/v1/ingestion/sync-status', ['sync_run_id' => $id, 'status' => 'completed', 'history_notice' => 'Second notice.'])->assertOk();
+        expect(DB::table('sync_runs')->value('history_notice'))->toBe('Second notice.');
+    });
+
+    it('leaves the history notice null when the gateway never sends one', function (): void {
+        s2sPost('/internal/v1/ingestion/sync-status', ['sync_type' => 'initial', 'status' => 'running'])->assertCreated();
+
+        expect(DB::table('sync_runs')->value('history_notice'))->toBeNull();
+    });
+
+    it('rejects an invalid history notice', function (mixed $notice): void {
+        s2sPost('/internal/v1/ingestion/sync-status', ['sync_type' => 'initial', 'status' => 'running', 'history_notice' => $notice])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('history_notice');
+
+        expect(DB::table('sync_runs')->count())->toBe(0);
+    })->with([
+        'too long' => [str_repeat('a', 256)],
+        'not a string' => [['nested' => 'array']],
+    ]);
 });
 
 it('rate limits ingestion per shop', function (): void {

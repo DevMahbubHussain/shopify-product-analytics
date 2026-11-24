@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Events\TenantPurgeRequested;
 use App\Models\Shop;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -19,6 +20,8 @@ final class TenantPurgeService
         }
 
         DB::transaction(function () use ($shop): void {
+            event(new TenantPurgeRequested($shop->id));
+
             DB::table('refund_line_items')->where('shop_id', $shop->id)->delete();
             DB::table('order_line_items')->where('shop_id', $shop->id)->delete();
             DB::table('orders')->where('shop_id', $shop->id)->delete();

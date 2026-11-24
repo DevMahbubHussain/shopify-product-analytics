@@ -2,8 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Events\TenantDeactivated;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 
 const UNINSTALL_PATH = '/internal/v1/ingestion/shop-uninstall';
 
@@ -105,4 +107,49 @@ it('rejects an invalid uninstall time', function (array $body): void {
 
 it('requires a valid S2S signature', function (): void {
     $this->postJson(UNINSTALL_PATH, ['uninstalled_at' => '2026-11-18T02:30:00Z'])->assertUnauthorized();
+});
+
+it('dispatches TenantDeactivated once when an active shop is uninstalled', function (): void {
+    Event::fake([TenantDeactivated::class]);
+    installShop();
+    installedAt('2026-11-01T00:00:00Z');
+    $shopId = shopRow()->id;
+
+    s2sPost(UNINSTALL_PATH, ['uninstalled_at' => '2026-11-18T08:30:00+06:00'])->assertOk();
+
+    Event::assertDispatchedTimes(TenantDeactivated::class, 1);
+    Event::assertDispatched(
+        TenantDeactivated::class,
+        fn (TenantDeactivated $event): bool => $event->shopId === $shopId
+            && $event->deactivatedAt->equalTo(CarbonImmutable::parse('2026-11-18T02:30:00Z'))
+    );
+});
+
+it('does not dispatch TenantDeactivated on a repeat uninstall delivery', function (): void {
+    installShop();
+    installedAt('2026-11-01T00:00:00Z');
+    s2sPost(UNINSTALL_PATH, ['uninstalled_at' => '2026-11-18T02:30:00Z'])->assertOk();
+
+    Event::fake([TenantDeactivated::class]);
+    s2sPost(UNINSTALL_PATH, ['uninstalled_at' => '2026-11-18T05:00:00Z'])->assertOk();
+
+    Event::assertNotDispatched(TenantDeactivated::class);
+});
+
+it('does not dispatch TenantDeactivated for an uninstall triggered before the current installation', function (): void {
+    Event::fake([TenantDeactivated::class]);
+    installShop();
+    installedAt('2026-11-18T10:00:00Z');
+
+    s2sPost(UNINSTALL_PATH, ['uninstalled_at' => '2026-11-18T09:59:59Z'])->assertOk();
+
+    Event::assertNotDispatched(TenantDeactivated::class);
+});
+
+it('does not dispatch TenantDeactivated for an unknown shop', function (): void {
+    Event::fake([TenantDeactivated::class]);
+
+    s2sPost(UNINSTALL_PATH, ['uninstalled_at' => '2026-11-18T02:30:00Z'])->assertNotFound();
+
+    Event::assertNotDispatched(TenantDeactivated::class);
 });

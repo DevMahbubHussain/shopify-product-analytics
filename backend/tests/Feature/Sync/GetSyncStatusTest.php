@@ -6,6 +6,7 @@ use App\Enums\SyncRunStatus;
 use App\Enums\SyncType;
 use App\Models\Shop;
 use App\Models\SyncRun;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 
@@ -162,5 +163,31 @@ describe('GET /internal/v1/sync/status', function (): void {
     it('returns 404 for a shop that was never installed', function (): void {
         s2sGet('/internal/v1/sync/status', 'uninstalled-shop.myshopify.com')
             ->assertNotFound();
+    });
+
+    it('returns the history notice of the latest run', function (): void {
+        $run = SyncRun::query()->create([
+            'shop_id' => $this->shopId,
+            'sync_type' => SyncType::Initial,
+            'status' => SyncRunStatus::Completed,
+        ]);
+        DB::table('sync_runs')->where('id', $run->id)->update(['history_notice' => 'Order history limited to the last 60 days.']);
+
+        s2sGet('/internal/v1/sync/status')
+            ->assertOk()
+            ->assertJsonPath('sync_run.history_notice', 'Order history limited to the last 60 days.');
+    });
+
+    it('returns a null history notice key when the run has none', function (): void {
+        SyncRun::query()->create([
+            'shop_id' => $this->shopId,
+            'sync_type' => SyncType::Initial,
+            'status' => SyncRunStatus::Completed,
+        ]);
+
+        $syncRun = s2sGet('/internal/v1/sync/status')->assertOk()->json('sync_run');
+
+        expect($syncRun)->toHaveKey('history_notice')
+            ->and($syncRun['history_notice'])->toBeNull();
     });
 });

@@ -441,3 +441,16 @@ test("runHistoricalSync reports orders-stage counters when it fails after produc
   assert.equal(failed?.records_received, 1);
   assertMonotonic(calls);
 });
+
+test("runHistoricalSync sends the order history notice only when starting the run", async () => {
+  const calls: SyncStatusBody[] = [];
+
+  await runHistoricalSync({
+    admin: createMockAdmin(),
+    backend: batchBackend(calls),
+    shopDomain: "test-store.myshopify.com",
+  });
+
+  assert.equal(calls[0].history_notice, "Order history limited to the last 60 days.");
+  assert.ok(calls.slice(1).every((call) => call.history_notice === undefined));
+});

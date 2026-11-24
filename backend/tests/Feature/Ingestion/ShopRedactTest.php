@@ -2,7 +2,10 @@
 
 declare(strict_types=1);
 
+use App\Events\TenantPurgeRequested;
+use App\Services\TenantPurgeService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -192,4 +195,65 @@ it('requires a valid S2S signature', function (): void {
     $this->postJson('/internal/v1/ingestion/shop-redact', [
         'shop_domain' => $this->shopDomain,
     ])->assertUnauthorized();
+});
+
+function insertRedactProduct(string $shopId): void
+{
+    DB::table('products')->insert([
+        'id' => (string) Str::uuid7(),
+        'shop_id' => $shopId,
+        'shopify_product_gid' => 'gid://shopify/Product/500',
+        'title' => 'Event Product',
+        'handle' => 'event-product',
+        'status' => 'ACTIVE',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+}
+
+it('dispatches TenantPurgeRequested once while tenant rows still exist', function (): void {
+    insertRedactProduct($this->shopId);
+    $seen = [];
+
+    Event::listen(TenantPurgeRequested::class, function (TenantPurgeRequested $event) use (&$seen): void {
+        $seen[] = [
+            'shop_id' => $event->shopId,
+            'shop_exists' => DB::table('shops')->where('id', $event->shopId)->exists(),
+            'products' => DB::table('products')->where('shop_id', $event->shopId)->count(),
+        ];
+    });
+
+    s2sPost('/internal/v1/ingestion/shop-redact', ['shop_domain' => $this->shopDomain], $this->shopDomain)->assertOk();
+
+    expect($seen)->toBe([['shop_id' => $this->shopId, 'shop_exists' => true, 'products' => 1]])
+        ->and(DB::table('shops')->where('id', $this->shopId)->exists())->toBeFalse();
+});
+
+it('does not dispatch TenantPurgeRequested for an unknown or already purged shop', function (): void {
+    s2sPost('/internal/v1/ingestion/shop-redact', ['shop_domain' => $this->shopDomain], $this->shopDomain)->assertOk();
+
+    Event::fake([TenantPurgeRequested::class]);
+
+    s2sPost('/internal/v1/ingestion/shop-redact', ['shop_domain' => $this->shopDomain], $this->shopDomain)->assertOk();
+    s2sPost('/internal/v1/ingestion/shop-redact', ['shop_domain' => 'unknown-shop.myshopify.com'], 'unknown-shop.myshopify.com')->assertOk();
+
+    Event::assertNotDispatched(TenantPurgeRequested::class);
+});
+
+it('rolls back the whole purge when a TenantPurgeRequested listener fails', function (): void {
+    insertRedactProduct($this->shopId);
+    $filePath = "exports/{$this->shopId}/keep.csv";
+    Storage::disk('local')->put($filePath, "a,b\n");
+
+    Event::listen(TenantPurgeRequested::class, function (): void {
+        throw new RuntimeException('listener failed');
+    });
+
+    expect(fn () => app(TenantPurgeService::class)->purgeByDomain($this->shopDomain))
+        ->toThrow(RuntimeException::class, 'listener failed');
+
+    expect(DB::table('shops')->where('id', $this->shopId)->exists())->toBeTrue()
+        ->and(DB::table('products')->where('shop_id', $this->shopId)->count())->toBe(1);
+
+    Storage::disk('local')->assertExists($filePath);
 });
