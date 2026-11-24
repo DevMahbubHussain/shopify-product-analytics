@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -27,6 +29,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 final class McpAuditLog extends Model
 {
     use HasUuids;
+    use MassPrunable;
+
+    /** PRD §10.1: rolling 90-day retention for audit metadata. */
+    public const RETENTION_DAYS = 90;
 
     public const UPDATED_AT = null;
 
@@ -54,6 +60,12 @@ final class McpAuditLog extends Model
             'duration_ms' => 'integer',
             'created_at' => 'immutable_datetime',
         ];
+    }
+
+    /** @return Builder<$this> */
+    public function prunable(): Builder
+    {
+        return self::query()->where('created_at', '<', now()->subDays(self::RETENTION_DAYS));
     }
 
     /**

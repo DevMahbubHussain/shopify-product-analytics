@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Middleware\AssignCorrelationId;
+use App\Http\Middleware\AuditMcpRequest;
 use App\Http\Middleware\AuthenticateMcp;
 use App\Http\Middleware\EnforceMcpEntitlement;
 use App\Http\Middleware\EnsureMcpConsent;
@@ -42,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
             $middleware->alias(
                 [
                     's2s' => VerifyS2SSignature::class,
+                    'mcp.audit' => AuditMcpRequest::class,
                     'mcp.auth' => AuthenticateMcp::class,
                     'mcp.tenant' => ResolveMcpTenant::class,
                     'mcp.consent' => EnsureMcpConsent::class,
