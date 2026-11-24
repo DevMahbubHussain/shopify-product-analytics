@@ -6,6 +6,7 @@ namespace App\Ingestion\Pipes;
 
 use App\Data\Ingestion\ShopUninstallData;
 use App\Enums\ShopStatus;
+use App\Events\TenantDeactivated;
 use App\Ingestion\Exceptions\UnknownShop;
 use App\Ingestion\IngestionContext;
 use App\Ingestion\IngestionResponse;
@@ -20,20 +21,27 @@ final class MarkShopUninstalled
     {
         $data = $context->payload(ShopUninstallData::class);
 
-        $status = DB::transaction(function () use ($data): ShopStatus {
+        /** @var array{Shop, bool} $outcome */
+        $outcome = DB::transaction(function () use ($data): array {
             $shop = Shop::query()->where('shop_domain', $data->shopDomain)->lockForUpdate()->first()
                 ?? throw new UnknownShop();
 
             if ($shop->status === ShopStatus::Uninstalled || $this->predatesInstall($shop, $data)) {
-                return $shop->status;
+                return [$shop, false];
             }
 
             $shop->fill(['status' => ShopStatus::Uninstalled, 'uninstalled_at' => $data->uninstalledAt])->save();
 
-            return ShopStatus::Uninstalled;
+            return [$shop, true];
         }, 5);
 
-        $context->response = new ShopResult($data->shopDomain, $status);
+        [$shop, $deactivated] = $outcome;
+
+        if ($deactivated) {
+            event(new TenantDeactivated($shop->id, $data->uninstalledAt));
+        }
+
+        $context->response = new ShopResult($data->shopDomain, $shop->status);
 
         return $next($context);
     }
