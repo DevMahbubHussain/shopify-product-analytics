@@ -12,7 +12,6 @@ use App\Models\McpToken;
 use App\Models\Shop;
 use App\Services\PlanEntitlementService;
 use Carbon\CarbonImmutable;
-use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -86,25 +85,15 @@ final class McpConsentController
                     $existing->update(['withdrawn_at' => CarbonImmutable::now()]);
                 }
 
-                try {
-                    return McpConsent::create(
-                        [
-                            'shop_id' => $shop->id,
-                            'platform' => $shop->platform,
-                            'granted_by_staff_ref' => $dto->staffRef,
-                            'policy_version' => $dto->policyVersion,
-                            'granted_at' => CarbonImmutable::now(),
-                        ]
-                    );
-                } catch (UniqueConstraintViolationException $e) {
-                    /** @var McpConsent|null $active */
-                    $active = McpConsent::query()->where('shop_id', $shop->id)->active()->first();
-                    if ($active !== null) {
-                        return $active;
-                    }
-
-                    throw $e;
-                }
+                return McpConsent::create(
+                    [
+                        'shop_id' => $shop->id,
+                        'platform' => $shop->platform,
+                        'granted_by_staff_ref' => $dto->staffRef,
+                        'policy_version' => $dto->policyVersion,
+                        'granted_at' => CarbonImmutable::now(),
+                    ]
+                );
             }, 5
         );
 
