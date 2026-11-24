@@ -60,6 +60,11 @@ Before marking any feature or step complete, execute the specific edge checks:
 ### C8. Git & Workflow Rules
 - **Commits Only On Explicit Request:** Never run `git commit` or `git push` on your own initiative. Wait for explicit user authorization.
 - **Feature Branch Workflow:** Develop each milestone on a dedicated feature branch cut from `main` (e.g. `foundation`, `ingestion-pipeline`, `analytics-engine`, `polaris-ui`, `billing-exports`).
+- **AI & MCP Integration Branch & Sub-Branch Hierarchy:**
+  - The AI & MCP feature stream operates on a dedicated parent integration branch: `ai-mcp-base` (cut from `main`).
+  - `ai-mcp-base` acts as the master/integration trunk for all AI and MCP work. Never merge AI & MCP branches into `main` during development.
+  - Sub-branches must follow the flat naming convention prefixed with `mcp-` followed directly by the feature name (e.g., `mcp-foundation`, `mcp-tools-parity`, `mcp-resources-prompts`, `mcp-polaris-ui`, `mcp-oauth-evals`). Never use phase indicators or numeric prefixes (e.g. no `phase-1`).
+  - All `mcp-*` sub-branches are cut directly from `ai-mcp-base` and merge exclusively back into `ai-mcp-base`.
 - **No CI Workflows:** Continuous Integration (CI) configuration files (e.g. `.github/workflows`) are not used; all test suites, linters, and verification checks run in the local Docker environment.
 
 ### C9. Laravel Architectural & Engineering Patterns (Core Guide Standards)
@@ -159,6 +164,7 @@ The project owner must understand and control every line that enters the codebas
 6. **Changes to approved files** follow the same rule: one file, explained, then wait.
 7. **No hidden work.** No extra files, refactors, renames, or "while I'm here" edits outside the approved step. If something else needs fixing, report it and ask.
 8. **Feature documentation.** When a feature is finished, produce a `docs/<feature>.md` explainer in the style of `docs/migrations.md`: what the feature provides, the request/data flow, a file-by-file breakdown, edge cases handled, and verification evidence.
+9. **In-Depth Laravel MCP & AI SDK Documentation (`docs/laravel-mcp/`):** During all Laravel MCP server and Laravel AI SDK development, maintain dedicated, comprehensive technical documentation under `docs/laravel-mcp/`. Every component, implementation mechanism, protocol behavior, tool definition, resource schema, prompt template, auth guard, middleware chain, and eval agent must be documented in exhaustive technical detail strictly adhering to official Laravel documentation (`laravel/mcp` and `laravel/ai`), explaining the underlying mechanics, architectural patterns, design contracts, and request lifecycle flows.
 
 This rule overrides any instruction to "go", "continue", or "implement the feature": those approve the next single step only.
 

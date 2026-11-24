@@ -13,6 +13,8 @@ Binding engineering rules live in `AGENTS.md` and are imported verbatim below. T
 - "Go" / "continue" approves the next single step only.
 - No extra files or side edits outside the approved step; report them and ask instead.
 - Finish every feature with a `docs/<feature>.md` explainer in the style of `docs/migrations.md`.
+- **AI & MCP Branch Hierarchy & Merge Rule (AGENTS.md C8):** All AI & MCP development operates on the dedicated integration parent branch `ai-mcp-base` (cut from `main`). Sub-branches use the flat naming convention `mcp-<feature>` (e.g. `mcp-foundation`, no phase numbers), cut directly from `ai-mcp-base`, and merge exclusively back into `ai-mcp-base`. Never merge into `main` during AI & MCP development.
+- **In-Depth Laravel MCP & AI SDK Documentation (AGENTS.md C15.9):** Maintain dedicated, exhaustive technical documentation under `docs/laravel-mcp/` covering every component, protocol mechanism, server lifecycle, tool schema, resource URI, prompt template, auth guard, middleware chain, and eval agent strictly adhering to official Laravel documentation (`laravel/mcp` and `laravel/ai`).
 
 ---
 
@@ -32,6 +34,7 @@ Binding engineering rules live in `AGENTS.md` and are imported verbatim below. T
 | `docs/performance_and_memory_benchmarks.md` | Batch limits (50 orders/250 lines), sub-50ms reads, O(1) query complexity, natural index plans, engine heap memory | Performance & scale testing |
 | `PRD/MCP-PRD.md` (gitignored, local only) | MCP server & AI integration PRD v2.1, platform-neutral core (§9.7) | MCP work, tenant lifecycle events |
 | `docs/platform-neutral-core.md` | `shops.platform`, `TenantDeactivated` / `TenantPurgeRequested`, `history_notice` seams | Lifecycle, sync status, any platform-specific code |
+| `docs/laravel-mcp/` | In-depth Laravel MCP server and AI SDK architecture, mechanisms, and implementation guides | Any MCP server or AI SDK feature development |
 | `README.md` | Local setup (Colima + Docker), S2S handshake probe | Environment setup |
 
 Precedence on conflict: `AGENTS.md` > `PRD/PRD.md` > `docs/system-design.html` > `README.md`. Surface any conflict to the user instead of silently picking one.
@@ -218,7 +221,7 @@ Ask the user before assuming any of these:
 
 ## 9. Working Checklist Per Task
 
-1. Confirm roadmap step and feature branch (C8). Never commit/push without explicit request.
+1. Confirm roadmap step and feature branch (C8). For AI & MCP tasks: sub-branch `mcp-<feature>` must be cut from `ai-mcp-base` and merge exclusively back into `ai-mcp-base`. Never commit/push without explicit request.
 2. Verify every Shopify field/topic/mutation on `shopify.dev` and every Laravel API in `vendor/` source (C1). Cite in summary, not code.
 3. TDD: failing Pest test → minimal code → refactor (C13). Real Postgres, `RefreshDatabase`.
 4. FormRequest → readonly DTO → service/pipeline → API Resource (C14).
