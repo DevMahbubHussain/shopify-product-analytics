@@ -131,3 +131,18 @@ Webhook Ingestion: app/uninstalled
 | `backend/app/Http/Requests/Internal/McpConsentRequest.php` | FormRequest mapping into `McpConsentData` DTO |
 | `backend/app/Http/Controllers/Internal/McpConsentController.php` | S2S controller for status, concurrent-safe idempotent grant, and consent withdrawal |
 | `backend/app/Http/Controllers/Internal/McpTokenController.php` | S2S controller for token listing, Pro-gated creation, and UUID-constrained revocation |
+
+---
+
+## 4. Deferred to the OAuth Phase (`mcp-oauth-evals`)
+
+The foundation supports static bearer tokens only. OAuth discovery is intentionally absent so clients are not pointed at an authorization server that does not exist yet. When Passport and `Mcp::oauthRoutes()` land (MCP PRD v2.1 Journey 2, §11.1), restore discovery:
+
+| Item | Current state | Required in the OAuth phase |
+|---|---|---|
+| `WWW-Authenticate` on `401` (`AuthenticateMcp::unauthorized()`) | `Bearer realm="mcp", error="invalid_token"` | Add `resource_metadata="https://mcp.<app-domain>/.well-known/oauth-protected-resource"` so clients can start OAuth discovery (RFC 9728) |
+| `GET /.well-known/oauth-protected-resource` | Not registered (an earlier version returned an empty `authorization_servers` list and invented scopes; removed) | Register with `resource` = the MCP resource URI on the MCP host, `authorization_servers` = the real Passport issuer, `bearer_methods_supported` = `["header"]`, `scopes_supported` = `["mcp:use"]` (the only scope `laravel/mcp` supports) |
+| Authorization server metadata | Not registered | `GET /.well-known/oauth-authorization-server` advertising `code_challenge_methods_supported: ["S256"]` (RFC 8414) |
+| Token audience | Static tokens only | Reject access tokens whose audience is not the MCP resource URI (RFC 8707) |
+
+Verification for that phase: an unauthenticated `POST /mcp` returns `401` with `resource_metadata`; following it reaches valid protected-resource and authorization-server metadata; ChatGPT and Claude connectors complete OAuth end to end.
