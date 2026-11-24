@@ -26,6 +26,7 @@ The `mcp-foundation` milestone delivers the core infrastructure required to host
    - `POST /mcp` registered in `routes/ai.php` adhering to MCP specification revision `2026-07-28`.
 6. **Lifecycle & Domain Event Integration:**
    - `RevokeMcpConnectionsOnTenantDeactivated`: Auto-discovered listener on `TenantDeactivated` event that revokes all tokens, marks consent withdrawn, and clears Redis token caches upon store uninstall.
+   - **Zero Duplicate Listener Discipline:** All listeners in `app/Listeners` rely exclusively on Laravel event auto-discovery (`@handle`). Manual `Event::listen` declarations in `AppServiceProvider` are strictly avoided to eliminate double job dispatching, verified by `tests/Feature/Infrastructure/EventListenerRegistrationTest.php`.
 7. **Internal S2S APIs (`/internal/v1/mcp/*`):**
    - Endpoints for React Router / Shopify Admin: status check, concurrent-safe idempotent consent grant (with parent shop `lockForUpdate()` and unique constraint recovery), consent withdrawal, token creation (strictly Pro-tier gated), token listing, and token revocation (guarded with UUID route constraint).
    - All responses formatted via typed Laravel API Resources (`McpConsentResource`, `McpTokenResource`, `GeneratedMcpTokenResource`) per Constraint C14.

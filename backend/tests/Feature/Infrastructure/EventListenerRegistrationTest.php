@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 use App\Events\OrdersIngested;
 use App\Events\RefundsIngested;
+use App\Events\TenantDeactivated;
 use App\Listeners\QueueMetricAggregationsFromOrders;
 use App\Listeners\QueueMetricAggregationsFromRefunds;
+use App\Listeners\RevokeMcpConnectionsOnTenantDeactivated;
 use Illuminate\Support\Facades\Event;
 
 /** @return list<string> */
@@ -17,7 +19,7 @@ function registeredListeners(string $event): array
     );
 }
 
-it('registers each ingestion listener exactly once', function (string $event, string $listener): void {
+it('registers each domain event listener exactly once', function (string $event, string $listener): void {
     $listeners = registeredListeners($event);
 
     expect($listeners)->toHaveCount(1)
@@ -25,4 +27,5 @@ it('registers each ingestion listener exactly once', function (string $event, st
 })->with([
     'orders' => [OrdersIngested::class, QueueMetricAggregationsFromOrders::class],
     'refunds' => [RefundsIngested::class, QueueMetricAggregationsFromRefunds::class],
+    'deactivated' => [TenantDeactivated::class, RevokeMcpConnectionsOnTenantDeactivated::class],
 ]);
