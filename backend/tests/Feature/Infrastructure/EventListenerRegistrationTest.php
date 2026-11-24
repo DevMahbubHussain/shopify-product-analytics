@@ -5,6 +5,8 @@ declare(strict_types=1);
 use App\Events\OrdersIngested;
 use App\Events\RefundsIngested;
 use App\Events\TenantDeactivated;
+use App\Events\TenantPurgeRequested;
+use App\Listeners\PurgeMcpCacheOnTenantPurge;
 use App\Listeners\QueueMetricAggregationsFromOrders;
 use App\Listeners\QueueMetricAggregationsFromRefunds;
 use App\Listeners\RevokeMcpConnectionsOnTenantDeactivated;
@@ -28,4 +30,5 @@ it('registers each domain event listener exactly once', function (string $event,
     'orders' => [OrdersIngested::class, QueueMetricAggregationsFromOrders::class],
     'refunds' => [RefundsIngested::class, QueueMetricAggregationsFromRefunds::class],
     'deactivated' => [TenantDeactivated::class, RevokeMcpConnectionsOnTenantDeactivated::class],
+    'purge' => [TenantPurgeRequested::class, PurgeMcpCacheOnTenantPurge::class],
 ]);

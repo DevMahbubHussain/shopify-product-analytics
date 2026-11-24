@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 namespace App\Mcp\Servers;
 
+use App\Mcp\Prompts\ProductDeepDivePrompt;
+use App\Mcp\Prompts\RefundAnomalyAuditPrompt;
+use App\Mcp\Prompts\WeeklyExecutiveBriefPrompt;
+use App\Mcp\Resources\MetricDefinitionsResource;
+use App\Mcp\Resources\ShopContextResource;
+use App\Mcp\Resources\SyncStatusResource;
 use App\Mcp\Tools\FindHighRefundProductsTool;
 use App\Mcp\Tools\GetAnalyticsOverviewTool;
 use App\Mcp\Tools\GetProductAnalyticsTool;
@@ -35,10 +41,18 @@ final class AnalyticsServer extends Server
     /**
      * @var array<int, class-string>
      */
-    protected array $resources = [];
+    protected array $resources = [
+        ShopContextResource::class,
+        SyncStatusResource::class,
+        MetricDefinitionsResource::class,
+    ];
 
     /**
      * @var array<int, class-string>
      */
-    protected array $prompts = [];
+    protected array $prompts = [
+        WeeklyExecutiveBriefPrompt::class,
+        RefundAnomalyAuditPrompt::class,
+        ProductDeepDivePrompt::class,
+    ];
 }

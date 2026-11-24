@@ -8,6 +8,7 @@ use Laravel\Mcp\Facades\Mcp;
 Mcp::web('/mcp', AnalyticsServer::class)
     ->middleware(
         [
+            'mcp.audit',
             'mcp.auth',
             'mcp.tenant',
             'mcp.consent',
