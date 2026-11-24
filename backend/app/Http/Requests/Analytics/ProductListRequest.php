@@ -16,7 +16,7 @@ final class ProductListRequest extends AnalyticsDateRangeRequest
             'vendor' => ['nullable', 'string', 'max:255'],
             'product_type' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'string', 'in:active,archived,draft'],
-            'sort' => ['nullable', 'string', 'in:net_sales,gross_sales,units_sold,orders,title'],
+            'sort' => ['nullable', 'string', 'in:net_sales,gross_sales,units_sold,orders,title,refund_rate,refunds'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],

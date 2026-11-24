@@ -55,7 +55,7 @@ class AnalyticsDateRangeRequest extends FormRequest
                 $to = CarbonImmutable::createFromFormat('Y-m-d', (string) $this->query('to'));
 
                 if ($from !== false && $to !== false) {
-                    if ($from->diffInDays($to) > 365) {
+                    if ($from->diffInDays($to) + 1 > 365) {
                         $validator->errors()->add('to', 'The date range cannot exceed 365 days.');
 
                         return;

@@ -27,7 +27,7 @@ final class PlanEntitlementService
         $tier = $this->resolvePlan($shop);
         $maxDays = $tier->maxAnalyticsDays();
 
-        $days = (int) $from->diffInDays($to);
+        $days = (int) $from->diffInDays($to) + 1;
 
         if ($days > $maxDays) {
             throw new PlanLimitExceededException(
