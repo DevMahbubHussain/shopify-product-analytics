@@ -331,6 +331,72 @@ Shopify Billing remains the source of truth; this table is a snapshot for server
 
 ---
 
+### Migration 11: `mcp_consents` (merchant data-sharing authorization)
+* **Files:** `backend/database/migrations/2026_11_24_000019_create_mcp_consents_table.php`, precision change in `2026_11_25_000023_alter_mcp_tokens_and_consents_timestamps_to_microsecond_precision.php`
+* **Tests:** `backend/tests/Feature/Internal/McpInternalApiTest.php` (incl. `MCP timestamp precision`)
+
+| Column | Type | Nullable | Default | Description |
+|---|---|---|---|---|
+| `id` | `UUID` | No | — | Primary key |
+| `shop_id` | `UUID` | No | — | Tenant (FK `shops.id`, cascade delete) |
+| `platform` | `VARCHAR(16)` | No | `'shopify'` | Platform of the shop at grant time |
+| `granted_by_staff_ref` | `VARCHAR(64)` | No | — | Staff id from the verified Shopify session token (`sub`) |
+| `policy_version` | `VARCHAR(16)` | No | — | Server-defined consent policy version |
+| `granted_at` | `TIMESTAMPTZ(6)` | No | — | Grant time |
+| `withdrawn_at` | `TIMESTAMPTZ(6)` | Yes | `NULL` | Withdrawal time; `NULL` = active |
+| `created_at`, `updated_at` | `TIMESTAMPTZ(6)` | Yes | — | Row timestamps |
+
+Constraints & indexes: partial `UNIQUE mcp_consents_shop_active_unique (shop_id) WHERE withdrawn_at IS NULL` (at most one active consent per shop), `INDEX mcp_consents_shop_withdrawn_idx (shop_id, withdrawn_at)`.
+
+---
+
+### Migration 12: `mcp_tokens` (connection tokens)
+* **Files:** `backend/database/migrations/2026_11_24_000020_create_mcp_tokens_table.php`, precision change in `2026_11_25_000023_…`
+* **Tests:** `backend/tests/Feature/Internal/McpInternalApiTest.php`, `backend/tests/Feature/Mcp/McpTokenServiceTest.php`
+
+| Column | Type | Nullable | Default | Description |
+|---|---|---|---|---|
+| `id` | `UUID` | No | — | Primary key |
+| `shop_id` | `UUID` | No | — | Tenant (FK `shops.id`, cascade delete) |
+| `name` | `VARCHAR(100)` | No | — | Merchant-chosen label |
+| `token_prefix` | `VARCHAR(16)` | No | — | Displayed prefix (`spa_mcp_…`) |
+| `token_hash` | `CHAR(64)` | No | — | SHA-256 of the token; plaintext is never stored |
+| `created_by_staff_ref` | `VARCHAR(64)` | No | — | Staff id from the verified session token |
+| `last_used_at` | `TIMESTAMPTZ(6)` | Yes | `NULL` | Last authenticated MCP request |
+| `expires_at` | `TIMESTAMPTZ(6)` | Yes | `NULL` | Optional expiry |
+| `revoked_at` | `TIMESTAMPTZ(6)` | Yes | `NULL` | Revocation time; `NULL` = not revoked |
+| `created_at`, `updated_at` | `TIMESTAMPTZ(6)` | Yes | — | Row timestamps |
+
+Constraints & indexes: `UNIQUE mcp_tokens_token_hash_unique (token_hash)`, `INDEX mcp_tokens_shop_revoked_idx (shop_id, revoked_at)`. "Active" = `revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())` (`McpToken::active()`).
+
+---
+
+### Migration 13: `mcp_audit_logs` (MCP request metadata)
+* **Files:** `backend/database/migrations/2026_11_24_000021_create_mcp_audit_logs_table.php`, precision change in `2026_11_25_000022_alter_mcp_audit_logs_created_at_to_microsecond_precision.php`
+* **Tests:** `backend/tests/Feature/Internal/McpAuditLogApiTest.php`, `backend/tests/Feature/Mcp/Operations/AuditMcpRequestTest.php`, `backend/tests/Feature/Performance/McpAuditLogBenchmarkTest.php`
+
+| Column | Type | Nullable | Default | Description |
+|---|---|---|---|---|
+| `id` | `UUID` | No | — | Primary key |
+| `shop_id` | `UUID` | No | — | Tenant (FK `shops.id`, cascade delete) |
+| `connection_type` | `VARCHAR(8)` | No | — | e.g. `token` |
+| `connection_id` | `UUID` | Yes | `NULL` | Token or grant used |
+| `method` | `VARCHAR(64)` | No | — | JSON-RPC method (`tools/call`, `resources/read`, …) |
+| `target_name` | `VARCHAR(128)` | Yes | `NULL` | Tool, resource or prompt name |
+| `status` | `VARCHAR(32)` | No | — | `success`, `rejected`, `error` |
+| `duration_ms` | `INTEGER` | No | — | Server-side latency |
+| `client_name` | `VARCHAR(100)` | Yes | `NULL` | Client-supplied name (truncated to fit) |
+| `protocol_version` | `VARCHAR(16)` | Yes | `NULL` | Negotiated MCP protocol version |
+| `correlation_id` | `UUID` | No | — | Request correlation id |
+| `created_at` | `TIMESTAMPTZ(6)` | No | — | Request time (no `updated_at`; rows are immutable) |
+
+Constraints & indexes: `INDEX mcp_audit_logs_shop_created_idx (shop_id, created_at)`, `INDEX mcp_audit_logs_connection_created_idx (connection_id, created_at)`. Rows older than 90 days are pruned (`McpAuditLog::prunable()`). No customer personal data.
+
+### Microsecond writes for MCP models
+The column type alone is not enough: Eloquent formats dates with the grammar's `Y-m-d H:i:s`, which drops microseconds. `McpConsent`, `McpToken` and `McpAuditLog` use `App\Models\Concerns\StoresMicrosecondTimestamps`, which sets `getDateFormat()` to `Y-m-d H:i:s.uP`. Query-builder `update()` calls bypass the model, so they pass values through `Model::microsecondTimestamp($at)` (consent withdrawal, tenant-deactivation listener, `TouchMcpTokenLastUsed`). Rollback of `000022`/`000023` returns the columns to `TIMESTAMPTZ(0)` (verified migrate → rollback → migrate on the dev database).
+
+---
+
 ## 4. Verification
 
 ### Automated tests

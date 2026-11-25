@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
-final class AggregateProductDailyMetricsJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
+final class AggregateProductDailyMetricsJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Dispatchable;
     use InteractsWithQueue;

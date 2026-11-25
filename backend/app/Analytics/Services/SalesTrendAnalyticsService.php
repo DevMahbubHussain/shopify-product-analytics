@@ -7,6 +7,7 @@ namespace App\Analytics\Services;
 use App\Analytics\Domain\FinancialMath;
 use App\Models\Shop;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 final class SalesTrendAnalyticsService
@@ -49,7 +50,7 @@ final class SalesTrendAnalyticsService
     }
 
     /**
-     * @param \Illuminate\Support\Collection<string, object> $records
+     * @param  Collection<string, object>  $records
      * @return list<array<string, mixed>>
      */
     private function buildDayPoints($records, string $from, string $to): array
@@ -77,7 +78,7 @@ final class SalesTrendAnalyticsService
     }
 
     /**
-     * @param \Illuminate\Support\Collection<string, object> $records
+     * @param  Collection<string, object>  $records
      * @return list<array<string, mixed>>
      */
     private function buildMonthPoints($records, string $from, string $to): array
@@ -131,7 +132,7 @@ final class SalesTrendAnalyticsService
     }
 
     /**
-     * @param \Illuminate\Support\Collection<string, object> $records
+     * @param  Collection<string, object>  $records
      * @return list<array<string, mixed>>
      */
     private function buildWeekPoints($records, string $from, string $to): array

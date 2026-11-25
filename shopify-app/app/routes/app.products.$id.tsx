@@ -17,7 +17,7 @@ import {
   loadProductDetail,
   type ProductDetailDashboardData,
 } from "../features/analytics/productDetailLoader.server.ts";
-import { DATE_PRESETS } from "../features/analytics/datePresets.ts";
+import { DATE_PRESETS } from "../lib/dates/datePresets.ts";
 import type { MetricComparison } from "../lib/backend/analyticsClient.server.ts";
 import {
   ProductDetailSkeleton,

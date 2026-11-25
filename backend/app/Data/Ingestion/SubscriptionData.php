@@ -15,8 +15,7 @@ final readonly class SubscriptionData
         public string $status,
         public ?CarbonImmutable $trialEndsAt,
         public ?CarbonImmutable $currentPeriodEnd,
-    ) {
-    }
+    ) {}
 
     /**
      * @param array{

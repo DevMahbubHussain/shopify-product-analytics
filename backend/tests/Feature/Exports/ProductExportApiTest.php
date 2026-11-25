@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use App\Jobs\GenerateProductCsvExportJob;
-use App\Models\Export;
 use App\Models\Subscription;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;

@@ -21,8 +21,7 @@ final class QueueMetricAggregationsFromOrders implements ShouldQueue
 
     public function __construct(
         private readonly StoreTimezoneService $timezoneService
-    ) {
-    }
+    ) {}
 
     public function handle(OrdersIngested $event): void
     {

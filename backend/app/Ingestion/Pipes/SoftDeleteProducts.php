@@ -38,7 +38,7 @@ final class SoftDeleteProducts
     }
 
     /**
-     * @param list<string> $gids
+     * @param  list<string>  $gids
      * @return list<string> ids of products deleted by this call
      */
     private function deleteProducts(string $shopId, array $gids): array

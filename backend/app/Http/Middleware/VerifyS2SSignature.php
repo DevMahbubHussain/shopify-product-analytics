@@ -68,7 +68,7 @@ class VerifyS2SSignature
     {
         return implode("\n", [
             strtoupper($request->getMethod()),
-            '/' . ltrim($request->path(), '/'),
+            '/'.ltrim($request->path(), '/'),
             $timestamp,
             $nonce,
             $shopDomain,
@@ -79,7 +79,7 @@ class VerifyS2SSignature
     /** Nonce TTL spans both sides of the timestamp window so a replay can never outlive its nonce record. */
     private function claimNonce(string $nonce): bool
     {
-        return Cache::store('redis')->add(self::NONCE_CACHE_PREFIX . $nonce, 1, $this->tolerance() * 2);
+        return Cache::store('redis')->add(self::NONCE_CACHE_PREFIX.$nonce, 1, $this->tolerance() * 2);
     }
 
     private function unauthorized(string $message): JsonResponse

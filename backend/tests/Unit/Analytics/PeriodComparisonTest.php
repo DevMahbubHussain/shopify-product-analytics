@@ -5,7 +5,7 @@ declare(strict_types=1);
 use App\Analytics\Services\PeriodComparisonService;
 
 it('calculates preceding period date range for an arbitrary N-day range', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     // 2026-05-11 to 2026-05-20 is 10 days inclusive
     $current = ['from' => '2026-05-11', 'to' => '2026-05-20'];
@@ -17,7 +17,7 @@ it('calculates preceding period date range for an arbitrary N-day range', functi
 });
 
 it('calculates monetary comparison with positive growth', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     $current = '1500.000000';
     $previous = '1000.000000';
@@ -30,7 +30,7 @@ it('calculates monetary comparison with positive growth', function () {
 });
 
 it('calculates monetary comparison with negative growth', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     $current = '800.000000';
     $previous = '1000.000000';
@@ -43,7 +43,7 @@ it('calculates monetary comparison with negative growth', function () {
 });
 
 it('calculates comparison with zero change', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     $current = '1000.000000';
     $previous = '1000.000000';
@@ -56,7 +56,7 @@ it('calculates comparison with zero change', function () {
 });
 
 it('safely handles zero previous period baseline without division by zero', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     // When previous period is zero and current has sales
     $result = $service->compareMonetary('500.000000', '0.000000');
@@ -76,7 +76,7 @@ it('safely handles zero previous period baseline without division by zero', func
 });
 
 it('handles negative previous period baseline using absolute denominator', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     // Previous net sales were negative (-100.00) due to refunds, current is 200.00
     // Delta: 200 - (-100) = 300.00
@@ -89,7 +89,7 @@ it('handles negative previous period baseline using absolute denominator', funct
 });
 
 it('calculates integer metric comparisons such as units and orders', function () {
-    $service = new PeriodComparisonService();
+    $service = new PeriodComparisonService;
 
     $result = $service->compareCount(15, 10);
     expect($result->delta)->toBe(5)

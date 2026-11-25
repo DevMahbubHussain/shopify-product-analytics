@@ -6,10 +6,8 @@ namespace Tests\Feature\Analytics;
 
 use App\Analytics\Services\StoreTimezoneService;
 use App\Jobs\AggregateProductDailyMetricsJob;
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
@@ -130,8 +128,7 @@ it('acquires deterministic row locks on existing orders inside transaction befor
         ->assertJson(['written' => 1]);
 
     // Verify a FOR UPDATE lock query was executed on orders in deterministic order
-    $lockQuery = collect($queries)->first(fn (string $sql): bool =>
-        str_contains(strtolower($sql), 'for update') && str_contains(strtolower($sql), 'orders')
+    $lockQuery = collect($queries)->first(fn (string $sql): bool => str_contains(strtolower($sql), 'for update') && str_contains(strtolower($sql), 'orders')
     );
 
     expect($lockQuery)->not->toBeNull();

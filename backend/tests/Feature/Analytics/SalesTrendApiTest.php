@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -18,7 +17,7 @@ function s2sTrendGet(string $path, array $query = [], string $shopDomain = 'acme
 {
     config()->set('services.s2s.secret', INGESTION_TEST_SECRET);
 
-    $normalizedPath = '/' . ltrim($path, '/');
+    $normalizedPath = '/'.ltrim($path, '/');
     $timestamp = (string) time();
     $nonce = (string) Str::uuid();
     $canonical = implode("\n", ['GET', $normalizedPath, $timestamp, $nonce, $shopDomain, hash('sha256', '')]);

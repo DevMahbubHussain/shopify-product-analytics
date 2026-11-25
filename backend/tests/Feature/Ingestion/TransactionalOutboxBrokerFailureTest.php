@@ -82,8 +82,7 @@ it('gracefully completes HTTP ingestion when fast-path Redis queue dispatch fail
         ->and($recoveredOutbox->dispatched_at)->not->toBeNull();
 
     // Verify downstream metric aggregation job was queued
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId && $job->metricDate === '2026-07-01'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId && $job->metricDate === '2026-07-01'
     );
 });
 
@@ -138,7 +137,6 @@ it('isolates poison pill corrupted outbox records as failed without crashing sub
         ->and($validRecord->dispatched_at)->not->toBeNull();
 
     // 6. Assert queue job for valid record was dispatched
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId && $job->metricDate === '2026-07-05'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId && $job->metricDate === '2026-07-05'
     );
 });

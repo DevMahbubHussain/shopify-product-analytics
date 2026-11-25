@@ -140,8 +140,7 @@ it('successfully recovers and publishes an event once its retry_after threshold 
     expect($record->status)->toBe('published')
         ->and($record->dispatched_at)->not->toBeNull();
 
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId && $job->metricDate === '2026-08-01'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId && $job->metricDate === '2026-08-01'
     );
 });
 

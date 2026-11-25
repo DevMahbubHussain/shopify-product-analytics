@@ -12,9 +12,7 @@ final readonly class DecimalAmount implements Stringable
 {
     public const PATTERN = '/^[0-9]{1,14}(\.[0-9]{1,6})?$/';
 
-    private function __construct(public string $value)
-    {
-    }
+    private function __construct(public string $value) {}
 
     public static function parse(string $value): self
     {

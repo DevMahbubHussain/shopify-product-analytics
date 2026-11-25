@@ -22,8 +22,7 @@ final class IngestionContext
     public function __construct(
         public readonly string $shopDomain,
         public readonly object $payload,
-    ) {
-    }
+    ) {}
 
     public function shop(): Shop
     {
@@ -32,14 +31,15 @@ final class IngestionContext
 
     /**
      * @template T of object
-     * @param class-string<T> $class
+     *
+     * @param  class-string<T>  $class
      * @return T
      */
     public function payload(string $class): object
     {
         return $this->payload instanceof $class
             ? $this->payload
-            : throw new LogicException("Pipe expected payload {$class}, got " . $this->payload::class . '.');
+            : throw new LogicException("Pipe expected payload {$class}, got ".$this->payload::class.'.');
     }
 
     public function response(): IngestionResponse

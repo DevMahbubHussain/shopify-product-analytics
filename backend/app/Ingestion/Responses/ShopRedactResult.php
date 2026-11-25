@@ -8,9 +8,7 @@ use App\Ingestion\IngestionResponse;
 
 final readonly class ShopRedactResult implements IngestionResponse
 {
-    public function __construct(public string $shopDomain)
-    {
-    }
+    public function __construct(public string $shopDomain) {}
 
     public function status(): int
     {

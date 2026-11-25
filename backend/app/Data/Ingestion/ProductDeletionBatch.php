@@ -9,9 +9,7 @@ use App\Support\ShopifyGid;
 final readonly class ProductDeletionBatch
 {
     /** @param list<ShopifyGid> $productGids */
-    public function __construct(public array $productGids)
-    {
-    }
+    public function __construct(public array $productGids) {}
 
     /** @param array{product_gids: list<string>} $data */
     public static function fromArray(array $data): self

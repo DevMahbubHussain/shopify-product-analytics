@@ -6,9 +6,7 @@ namespace App\Data\Ingestion;
 
 final readonly class ShopRedactData
 {
-    public function __construct(public string $shopDomain)
-    {
-    }
+    public function __construct(public string $shopDomain) {}
 
     /** @param array{shop_domain: string} $data */
     public static function fromArray(array $data): self

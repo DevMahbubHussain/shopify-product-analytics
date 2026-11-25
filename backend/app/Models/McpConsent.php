@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Enums\Platform;
+use App\Models\Concerns\StoresMicrosecondTimestamps;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -26,6 +27,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 final class McpConsent extends Model
 {
     use HasUuids;
+    use StoresMicrosecondTimestamps;
 
     protected $fillable = [
         'id',

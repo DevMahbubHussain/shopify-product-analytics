@@ -190,14 +190,14 @@ it('aggregates daily metrics over 1,000 line items using database indexes with s
 
     // Report the actual plan choice rather than asserting the word "Index":
     // PostgreSQL may correctly choose a sequential scan depending on statistics.
-    fwrite(STDERR, PHP_EOL . '[performance] aggregation_plan=' . json_encode([
+    fwrite(STDERR, PHP_EOL.'[performance] aggregation_plan='.json_encode([
         'scan_nodes' => $scanNodes,
         'used_indexes' => array_values(array_unique($usedIndexes)),
         'actual_rows' => $planRoot['Actual Rows'] ?? null,
         'actual_total_ms' => $planRoot['Actual Total Time'] ?? null,
         'shared_hit_blocks' => $planRoot['Shared Hit Blocks'] ?? null,
         'shared_read_blocks' => $planRoot['Shared Read Blocks'] ?? null,
-    ], JSON_THROW_ON_ERROR) . PHP_EOL);
+    ], JSON_THROW_ON_ERROR).PHP_EOL);
 
     // One warm-up followed by ten measured runs; report p50/p95 instead of
     // treating one noisy request as a representative performance result.
@@ -212,11 +212,11 @@ it('aggregates daily metrics over 1,000 line items using database indexes with s
     sort($samplesMs);
     $p50Ms = $samplesMs[(int) floor((count($samplesMs) - 1) * 0.50)];
     $p95Ms = $samplesMs[(int) ceil((count($samplesMs) - 1) * 0.95)];
-    fwrite(STDERR, PHP_EOL . '[performance] aggregation_latency_ms=' . json_encode([
+    fwrite(STDERR, PHP_EOL.'[performance] aggregation_latency_ms='.json_encode([
         'samples' => count($samplesMs),
         'p50' => round($p50Ms, 2),
         'p95' => round($p95Ms, 2),
-    ], JSON_THROW_ON_ERROR) . PHP_EOL);
+    ], JSON_THROW_ON_ERROR).PHP_EOL);
 
     $maxP95Ms = (float) env('PERF_AGGREGATION_P95_MS', 1000);
     expect($p95Ms)->toBeLessThan($maxP95Ms);
@@ -308,11 +308,11 @@ it('handles 365 days of historical metrics with zero N+1 queries and sub-100ms r
     // framework/authentication query count that can change without an N+1 regression.
     expect(count($executedQueries))->toBeLessThanOrEqual(10);
 
-    fwrite(STDERR, PHP_EOL . '[performance] overview=' . json_encode([
+    fwrite(STDERR, PHP_EOL.'[performance] overview='.json_encode([
         'query_count' => count($executedQueries),
         'response_ms' => round($responseMs, 2),
         'historical_days' => 365,
-    ], JSON_THROW_ON_ERROR) . PHP_EOL);
+    ], JSON_THROW_ON_ERROR).PHP_EOL);
 
     $maxOverviewMs = (float) env('PERF_OVERVIEW_MAX_MS', 1000);
     expect($responseMs)->toBeLessThan($maxOverviewMs);
@@ -348,11 +348,11 @@ it('proves memory stability across sequential ingestion batches without memory l
     // framework caches while still detecting unbounded per-batch retention.
     $memoryDeltaMb = ($snapshots[4] - $snapshots[1]) / (1024 * 1024);
 
-    fwrite(STDERR, PHP_EOL . '[performance] sequential_memory_mb=' . json_encode([
+    fwrite(STDERR, PHP_EOL.'[performance] sequential_memory_mb='.json_encode([
         'after_warmup' => round($snapshots[1] / (1024 * 1024), 2),
         'after_final_batch' => round($snapshots[4] / (1024 * 1024), 2),
         'delta' => round($memoryDeltaMb, 2),
-    ], JSON_THROW_ON_ERROR) . PHP_EOL);
+    ], JSON_THROW_ON_ERROR).PHP_EOL);
 
     expect($memoryDeltaMb)->toBeLessThan(4.0);
 });

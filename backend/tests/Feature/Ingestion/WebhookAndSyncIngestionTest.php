@@ -131,7 +131,7 @@ describe('sync status', function (): void {
             'sync_type' => 'initial',
             'status' => 'running',
         ])->assertConflict()
-          ->assertExactJson(['error' => 'A sync run is already in progress for this shop.']);
+            ->assertExactJson(['error' => 'A sync run is already in progress for this shop.']);
     });
 
     it('allows starting a new sync run if previous running run is stalled past 10 minutes', function (): void {
@@ -194,7 +194,7 @@ describe('sync status', function (): void {
 
 it('rate limits ingestion per shop', function (): void {
     config()->set('services.s2s.ingestion_per_minute', 2);
-    $domain = 'limited-' . Str::lower(Str::random(6)) . '.myshopify.com';
+    $domain = 'limited-'.Str::lower(Str::random(6)).'.myshopify.com';
 
     s2sPost('/internal/v1/ingestion/shop', ['currency_code' => 'USD', 'timezone' => 'UTC'], $domain)->assertOk();
     s2sPost('/internal/v1/ingestion/shop', ['currency_code' => 'USD', 'timezone' => 'UTC'], $domain)->assertOk();

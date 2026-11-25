@@ -109,7 +109,7 @@ describe('GET /internal/v1/sync/status', function (): void {
             'records_processed' => 100,
             'started_at' => now()->subHours(2),
         ]);
-        \Illuminate\Support\Facades\DB::table('sync_runs')->where('id', $run->id)->update([
+        DB::table('sync_runs')->where('id', $run->id)->update([
             'created_at' => now()->subHours(2),
         ]);
 

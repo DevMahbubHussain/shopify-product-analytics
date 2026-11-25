@@ -4,20 +4,21 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * @property      string $id
- * @property      string $shop_id
- * @property      string|null $shopify_subscription_gid
- * @property      string $plan_key
- * @property      string $status
- * @property      \Carbon\CarbonImmutable|null $trial_ends_at
- * @property      \Carbon\CarbonImmutable|null $current_period_end
- * @property      \Carbon\CarbonImmutable $created_at
- * @property      \Carbon\CarbonImmutable $updated_at
+ * @property string $id
+ * @property string $shop_id
+ * @property string|null $shopify_subscription_gid
+ * @property string $plan_key
+ * @property string $status
+ * @property CarbonImmutable|null $trial_ends_at
+ * @property CarbonImmutable|null $current_period_end
+ * @property CarbonImmutable $created_at
+ * @property CarbonImmutable $updated_at
  * @property-read Shop $shop
  */
 final class Subscription extends Model

@@ -185,6 +185,6 @@ class OutboxService
             ];
         }
 
-        throw new InvalidArgumentException('Unsupported event class for outbox serialization: ' . get_class($event));
+        throw new InvalidArgumentException('Unsupported event class for outbox serialization: '.get_class($event));
     }
 }

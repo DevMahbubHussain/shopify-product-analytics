@@ -16,7 +16,7 @@ function installShop(string $domain = 'acme.myshopify.com', string $timezone = '
 }
 
 /**
- * @param array<string, mixed> $overrides
+ * @param  array<string, mixed>  $overrides
  * @return array<string, mixed>
  */
 function productPayload(int $id = 1, array $overrides = []): array
@@ -39,7 +39,7 @@ function productPayload(int $id = 1, array $overrides = []): array
 }
 
 /**
- * @param array<string, mixed> $overrides
+ * @param  array<string, mixed>  $overrides
  * @return array<string, mixed>
  */
 function lineItemPayload(int $orderId, int $line, int $productId = 1, array $overrides = []): array
@@ -57,7 +57,7 @@ function lineItemPayload(int $orderId, int $line, int $productId = 1, array $ove
 }
 
 /**
- * @param array<string, mixed> $overrides
+ * @param  array<string, mixed>  $overrides
  * @return array<string, mixed>
  */
 function orderPayload(int $id = 1, array $overrides = []): array
@@ -76,7 +76,7 @@ function orderPayload(int $id = 1, array $overrides = []): array
 }
 
 /**
- * @param array<string, mixed> $overrides
+ * @param  array<string, mixed>  $overrides
  * @return array<string, mixed>
  */
 function refundLinePayload(int $id = 1, int $orderId = 1, array $overrides = []): array

@@ -24,7 +24,7 @@ final class MarkShopUninstalled
         /** @var array{Shop, bool} $outcome */
         $outcome = DB::transaction(function () use ($data): array {
             $shop = Shop::query()->where('shop_domain', $data->shopDomain)->lockForUpdate()->first()
-                ?? throw new UnknownShop();
+                ?? throw new UnknownShop;
 
             if ($shop->status === ShopStatus::Uninstalled || $this->predatesInstall($shop, $data)) {
                 return [$shop, false];

@@ -11,7 +11,7 @@ import {
 import {
   parseDateRange,
   type DateRange,
-} from "./datePresets.ts";
+} from "../../lib/dates/datePresets.ts";
 
 export interface ProductDetailDashboardData {
   readonly shopDomain: string;

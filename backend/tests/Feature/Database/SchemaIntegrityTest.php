@@ -80,7 +80,7 @@ function seedLineItem(string $shopId, string $orderId, array $overrides = []): s
     return insertRow('order_line_items', array_merge([
         'shop_id' => $shopId,
         'order_id' => $orderId,
-        'shopify_line_item_gid' => 'gid://shopify/LineItem/' . Str::random(8),
+        'shopify_line_item_gid' => 'gid://shopify/LineItem/'.Str::random(8),
         'title_snapshot' => 'Tee',
         'quantity' => 2,
         'original_unit_price' => '10.000000',
@@ -263,8 +263,8 @@ describe('value constraints', function (): void {
     });
 
     it('rejects currency codes that are not three uppercase letters', function (string $table): void {
-        $orderId = seedOrder($this->shopA, 'gid://shopify/Order/' . Str::random(6));
-        $productId = seedProduct($this->shopA, 'gid://shopify/Product/' . Str::random(6));
+        $orderId = seedOrder($this->shopA, 'gid://shopify/Order/'.Str::random(6));
+        $productId = seedProduct($this->shopA, 'gid://shopify/Product/'.Str::random(6));
 
         $insert = match ($table) {
             'shops' => fn () => insertRow('shops', ['shop_domain' => 'c.myshopify.com', 'currency_code' => 'usd', 'timezone' => 'UTC', 'status' => 'active', 'installed_at' => now()]),

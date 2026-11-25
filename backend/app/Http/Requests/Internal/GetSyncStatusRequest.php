@@ -19,10 +19,10 @@ final class GetSyncStatusRequest extends IngestionRequest
 
     public function resolveShop(): Shop
     {
-        $shop = Shop::query()->where('shop_domain', $this->shopDomain())->first() ?? throw new UnknownShop();
+        $shop = Shop::query()->where('shop_domain', $this->shopDomain())->first() ?? throw new UnknownShop;
 
         if ($shop->status !== ShopStatus::Active) {
-            throw new InactiveShop();
+            throw new InactiveShop;
         }
 
         return $shop;

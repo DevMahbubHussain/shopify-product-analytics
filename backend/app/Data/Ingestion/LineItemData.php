@@ -18,8 +18,7 @@ final readonly class LineItemData
         public int $quantity,
         public DecimalAmount $originalUnitPrice,
         public DecimalAmount $discountAmount,
-    ) {
-    }
+    ) {}
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self

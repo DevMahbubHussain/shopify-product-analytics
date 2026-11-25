@@ -11,7 +11,7 @@ pest()->extend(TestCase::class)
     ->use(RefreshDatabase::class)
     ->in('Feature');
 
-require_once __DIR__ . '/Support/ingestion.php';
+require_once __DIR__.'/Support/ingestion.php';
 
 const INGESTION_TEST_SECRET = 'ingestion-test-secret';
 
@@ -41,7 +41,7 @@ if (! function_exists('s2sGet')) {
         config()->set('services.s2s.secret', INGESTION_TEST_SECRET);
 
         $parsedPath = parse_url($path, PHP_URL_PATH) ?? $path;
-        $normalizedPath = '/' . ltrim($parsedPath, '/');
+        $normalizedPath = '/'.ltrim($parsedPath, '/');
         $timestamp = (string) time();
         $nonce = (string) Str::uuid();
         $canonical = implode("\n", ['GET', $normalizedPath, $timestamp, $nonce, $shopDomain, hash('sha256', '')]);
@@ -56,4 +56,3 @@ if (! function_exists('s2sGet')) {
         ]);
     }
 }
-

@@ -4,10 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Ingestion;
 
-use App\Events\OrdersIngested;
-use App\Events\RefundsIngested;
 use App\Jobs\AggregateProductDailyMetricsJob;
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -49,11 +46,9 @@ it('captures both old and new buckets across line item removals, additions, and 
         ->assertJson(['written' => 1]);
 
     // Verify initial buckets: (Product 1, 2026-05-10) and (Product 2, 2026-05-10)
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId1 && $job->metricDate === '2026-05-10'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId1 && $job->metricDate === '2026-05-10'
     );
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId2 && $job->metricDate === '2026-05-10'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId2 && $job->metricDate === '2026-05-10'
     );
 
     // 2. Updated order:
@@ -81,17 +76,13 @@ it('captures both old and new buckets across line item removals, additions, and 
     // NEW buckets:
     // - Product 1 on 2026-05-15 (new date)
     // - Product 3 on 2026-05-15 (new line item)
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId1 && $job->metricDate === '2026-05-10'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId1 && $job->metricDate === '2026-05-10'
     );
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId2 && $job->metricDate === '2026-05-10'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId2 && $job->metricDate === '2026-05-10'
     );
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId1 && $job->metricDate === '2026-05-15'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId1 && $job->metricDate === '2026-05-15'
     );
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId3 && $job->metricDate === '2026-05-15'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId3 && $job->metricDate === '2026-05-15'
     );
 
     // Verify latest outbox record contains the complete unified affected buckets
@@ -143,7 +134,6 @@ it('captures refund pre-update and post-update buckets across multiple line item
         ->assertJson(['written' => 1]);
 
     // Assert refund dispatched aggregation for (Product 1, 2026-06-03)
-    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) =>
-        $job->productId === $this->productId1 && $job->metricDate === '2026-06-03'
+    Queue::assertPushed(AggregateProductDailyMetricsJob::class, fn ($job) => $job->productId === $this->productId1 && $job->metricDate === '2026-06-03'
     );
 });

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Concerns\StoresMicrosecondTimestamps;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -30,6 +31,7 @@ final class McpAuditLog extends Model
 {
     use HasUuids;
     use MassPrunable;
+    use StoresMicrosecondTimestamps;
 
     /** PRD §10.1: rolling 90-day retention for audit metadata. */
     public const RETENTION_DAYS = 90;

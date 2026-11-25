@@ -10,6 +10,7 @@ use App\Models\Shop;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Laravel\Mcp\Request;
 
 uses(RefreshDatabase::class);
 
@@ -177,8 +178,8 @@ describe(
 );
 
 it('documents the actual implementation without phantom parameters', function (): void {
-    $text = (string) app(\App\Mcp\Resources\MetricDefinitionsResource::class)
-        ->handle(new \Laravel\Mcp\Request([]))
+    $text = (string) app(MetricDefinitionsResource::class)
+        ->handle(new Request([]))
         ->content();
 
     expect($text)->toContain('Monday')

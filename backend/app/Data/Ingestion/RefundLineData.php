@@ -21,8 +21,7 @@ final readonly class RefundLineData
         public string $currencyCode,
         public ?CarbonImmutable $processedAt,
         public ?CarbonImmutable $shopifyUpdatedAt = null,
-    ) {
-    }
+    ) {}
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self

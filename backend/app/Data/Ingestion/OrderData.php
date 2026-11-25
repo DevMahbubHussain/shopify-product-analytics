@@ -23,8 +23,7 @@ final readonly class OrderData
         public ?CarbonImmutable $cancelledAt,
         public CarbonImmutable $shopifyUpdatedAt,
         public array $lineItems,
-    ) {
-    }
+    ) {}
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self

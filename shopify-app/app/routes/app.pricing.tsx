@@ -115,7 +115,7 @@ export default function PricingPage() {
 
   return (
     <s-page heading="Plans & Billing">
-      <s-link slot="breadcrumb-action" href="/app">
+      <s-link slot="breadcrumb-actions" href="/app">
         Dashboard
       </s-link>
 

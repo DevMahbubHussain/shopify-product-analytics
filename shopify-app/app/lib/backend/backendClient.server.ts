@@ -87,36 +87,18 @@ export class BackendClient {
     body: object,
     correlationId: string = randomUUID(),
   ): Promise<TResponse> {
-    const normalizedPath = normalizePath(path);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const nonce = randomUUID();
-    const bodyString = JSON.stringify(body);
-
-    const response = await fetch(`${this.baseUrl}${normalizedPath}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "X-App-Shop-Domain": shopDomain,
-        "X-App-Timestamp": timestamp.toString(),
-        "X-App-Nonce": nonce,
-        "X-App-Signature": this.generateSignature(
-          "POST",
-          normalizedPath,
-          timestamp,
-          nonce,
-          shopDomain,
-          bodyString,
-        ),
-        "X-Correlation-ID": correlationId,
-      },
-      body: bodyString,
+    const response = await this.signedFetch("POST", path, shopDomain, correlationId, {
+      body: JSON.stringify(body),
     });
+    return (await response.json()) as TResponse;
+  }
 
-    if (!response.ok) {
-      throw new BackendError(response.status, await response.text());
-    }
-
+  public async deleteInternal<TResponse = unknown>(
+    path: string,
+    shopDomain: string,
+    correlationId: string = randomUUID(),
+  ): Promise<TResponse> {
+    const response = await this.signedFetch("DELETE", path, shopDomain, correlationId);
     return (await response.json()) as TResponse;
   }
 
@@ -126,35 +108,9 @@ export class BackendClient {
     correlationId: string = randomUUID(),
     params?: QueryParams,
   ): Promise<TResponse> {
-    const [pathOnly, inlineQuery] = path.split("?");
-    const normalizedPath = normalizePath(pathOnly);
-    const queryString = buildQueryString(inlineQuery, params);
-    const timestamp = Math.floor(Date.now() / 1000);
-    const nonce = randomUUID();
-
-    const response = await fetch(`${this.baseUrl}${normalizedPath}${queryString}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "X-App-Shop-Domain": shopDomain,
-        "X-App-Timestamp": timestamp.toString(),
-        "X-App-Nonce": nonce,
-        "X-App-Signature": this.generateSignature(
-          "GET",
-          normalizedPath,
-          timestamp,
-          nonce,
-          shopDomain,
-          "",
-        ),
-        "X-Correlation-ID": correlationId,
-      },
+    const response = await this.signedFetch("GET", path, shopDomain, correlationId, {
+      params,
     });
-
-    if (!response.ok) {
-      throw new BackendError(response.status, await response.text());
-    }
-
     return (await response.json()) as TResponse;
   }
 
@@ -164,29 +120,49 @@ export class BackendClient {
     correlationId: string = randomUUID(),
     params?: QueryParams,
   ): Promise<Response> {
+    return this.signedFetch("GET", path, shopDomain, correlationId, {
+      params,
+      accept: "*/*",
+    });
+  }
+
+  private async signedFetch(
+    method: "GET" | "POST" | "DELETE",
+    path: string,
+    shopDomain: string,
+    correlationId: string,
+    options: { body?: string; params?: QueryParams; accept?: string } = {},
+  ): Promise<Response> {
     const [pathOnly, inlineQuery] = path.split("?");
     const normalizedPath = normalizePath(pathOnly);
-    const queryString = buildQueryString(inlineQuery, params);
+    const queryString = buildQueryString(inlineQuery, options.params);
+    const body = options.body ?? "";
     const timestamp = Math.floor(Date.now() / 1000);
     const nonce = randomUUID();
 
+    const headers: Record<string, string> = {
+      Accept: options.accept ?? "application/json",
+      "X-App-Shop-Domain": shopDomain,
+      "X-App-Timestamp": timestamp.toString(),
+      "X-App-Nonce": nonce,
+      "X-App-Signature": this.generateSignature(
+        method,
+        normalizedPath,
+        timestamp,
+        nonce,
+        shopDomain,
+        body,
+      ),
+      "X-Correlation-ID": correlationId,
+    };
+    if (options.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+
     const response = await fetch(`${this.baseUrl}${normalizedPath}${queryString}`, {
-      method: "GET",
-      headers: {
-        Accept: "*/*",
-        "X-App-Shop-Domain": shopDomain,
-        "X-App-Timestamp": timestamp.toString(),
-        "X-App-Nonce": nonce,
-        "X-App-Signature": this.generateSignature(
-          "GET",
-          normalizedPath,
-          timestamp,
-          nonce,
-          shopDomain,
-          "",
-        ),
-        "X-Correlation-ID": correlationId,
-      },
+      method,
+      headers,
+      body: options.body,
     });
 
     if (!response.ok) {

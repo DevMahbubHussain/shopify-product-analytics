@@ -25,14 +25,14 @@ it('isolates redis cache keys from the development databases and prefixes', func
 });
 
 it('writes redis cache entries into the isolated test database', function (): void {
-    $key = 'isolation-probe:' . Str::uuid();
+    $key = 'isolation-probe:'.Str::uuid();
 
     Cache::store('redis')->put($key, 1, 30);
 
     $client = Redis::connection('cache')->client();
 
     expect((int) $client->getDbNum())->toBe(3)
-        ->and((int) $client->rawCommand('EXISTS', 'spa-test-database-spa-test-cache-' . $key))->toBe(1);
+        ->and((int) $client->rawCommand('EXISTS', 'spa-test-database-spa-test-cache-'.$key))->toBe(1);
 
     Cache::store('redis')->forget($key);
 });

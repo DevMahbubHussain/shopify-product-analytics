@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * @return array<string, mixed> 
+ * @return array<string, mixed>
  */
 function platformShopRow(array $overrides = []): array
 {

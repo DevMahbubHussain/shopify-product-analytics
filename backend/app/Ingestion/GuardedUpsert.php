@@ -14,9 +14,9 @@ final class GuardedUpsert
     private const MAX_BINDINGS = 60000;
 
     /**
-     * @param list<array<string, mixed>> $rows
-     * @param list<string> $uniqueBy
-     * @param list<string> $update
+     * @param  list<array<string, mixed>>  $rows
+     * @param  list<string>  $uniqueBy
+     * @param  list<string>  $update
      * @return array<string, string> written rows keyed by the last unique column => id
      */
     public function __invoke(string $table, array $rows, array $uniqueBy, array $update, ?string $freshnessColumn = null): array
@@ -45,16 +45,16 @@ final class GuardedUpsert
     }
 
     /**
-     * @param list<string> $columns
-     * @param list<string> $uniqueBy
-     * @param list<string> $update
+     * @param  list<string>  $columns
+     * @param  list<string>  $uniqueBy
+     * @param  list<string>  $update
      */
     private function sql(string $table, array $columns, int $rowCount, array $uniqueBy, array $update, ?string $freshnessColumn): string
     {
         $grammar = DB::getQueryGrammar();
         $wrap = fn (array $names): string => implode(', ', array_map($grammar->wrap(...), $names));
-        $rowPlaceholder = '(' . implode(', ', array_fill(0, count($columns), '?')) . ')';
-        $set = implode(', ', array_map(fn (string $c): string => $grammar->wrap($c) . ' = excluded.' . $grammar->wrap($c), $update));
+        $rowPlaceholder = '('.implode(', ', array_fill(0, count($columns), '?')).')';
+        $set = implode(', ', array_map(fn (string $c): string => $grammar->wrap($c).' = excluded.'.$grammar->wrap($c), $update));
 
         $sql = sprintf(
             'insert into %s (%s) values %s on conflict (%s) do update set %s',
@@ -66,16 +66,16 @@ final class GuardedUpsert
         );
 
         if ($freshnessColumn !== null) {
-            $current = $grammar->wrapTable($table) . '.' . $grammar->wrap($freshnessColumn);
-            $incoming = 'excluded.' . $grammar->wrap($freshnessColumn);
+            $current = $grammar->wrapTable($table).'.'.$grammar->wrap($freshnessColumn);
+            $incoming = 'excluded.'.$grammar->wrap($freshnessColumn);
             $sql .= " where {$current} is null or ({$incoming} is not null and {$incoming} >= {$current})";
         }
 
-        return $sql . ' returning ' . $wrap(['id', end($uniqueBy)]);
+        return $sql.' returning '.$wrap(['id', end($uniqueBy)]);
     }
 
     /**
-     * @param list<array<string, mixed>> $rows
+     * @param  list<array<string, mixed>>  $rows
      * @return list<mixed>
      */
     private function bindings(array $rows): array

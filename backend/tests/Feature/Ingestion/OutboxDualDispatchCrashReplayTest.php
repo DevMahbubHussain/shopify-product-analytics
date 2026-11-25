@@ -8,6 +8,7 @@ use App\Analytics\Services\StoreTimezoneService;
 use App\Events\OrdersIngested;
 use App\Ingestion\Services\OutboxService;
 use App\Jobs\AggregateProductDailyMetricsJob;
+use App\Listeners\QueueMetricAggregationsFromOrders;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -30,8 +31,10 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
 
     // 2. Bind a simulated OutboxService test double that throws during markPublished()
     // The real DispatchIngestedEvents pipe is used; it invokes markPublished(), catches the error, and leaves record pending
-    $simulatedOutbox = new class extends OutboxService {
+    $simulatedOutbox = new class extends OutboxService
+    {
         public int $markPublishedCalls = 0;
+
         public bool $shouldCrashOnMarkPublished = true;
 
         public function markPublished(string $outboxId): void
@@ -74,7 +77,7 @@ it('proves idempotent metric convergence when fast-path dispatches but crashes b
     $firstPayloadRaw = $this->redis->lindex('queues:default', 0);
     expect($firstPayloadRaw)->not->toBeEmpty();
     $firstPayload = json_decode((string) $firstPayloadRaw, true);
-    expect($firstPayload['displayName'] ?? '')->toBe(\App\Listeners\QueueMetricAggregationsFromOrders::class);
+    expect($firstPayload['displayName'] ?? '')->toBe(QueueMetricAggregationsFromOrders::class);
 
     // VERIFY MARK_PUBLISHED FAILED & WAS CAUGHT BY REAL PIPE:
     // 1. OutboxService::markPublished was actually invoked by DispatchIngestedEvents
@@ -197,8 +200,10 @@ it('proves recovery replay safety when sweeper dispatches but crashes before mar
     ]);
 
     // 2. Bind a simulated OutboxService test double to simulate sweeper crash during markPublished
-    $simulatedOutbox = new class extends OutboxService {
+    $simulatedOutbox = new class extends OutboxService
+    {
         public int $markPublishedCalls = 0;
+
         public bool $shouldCrashOnMarkPublished = true;
 
         public function markPublished(string $outboxId): void
@@ -230,7 +235,7 @@ it('proves recovery replay safety when sweeper dispatches but crashes before mar
     $firstPayloadRaw = $this->redis->lindex('queues:default', 0);
     expect($firstPayloadRaw)->not->toBeEmpty();
     $firstPayload = json_decode((string) $firstPayloadRaw, true);
-    expect($firstPayload['displayName'] ?? '')->toBe(\App\Listeners\QueueMetricAggregationsFromOrders::class);
+    expect($firstPayload['displayName'] ?? '')->toBe(QueueMetricAggregationsFromOrders::class);
 
     // 3. Verify record was marked as failed attempt (transient backoff) and remains pending in PostgreSQL
     $outboxAfterCycle1 = DB::table('outbox_events')->where('id', $outboxId)->first();

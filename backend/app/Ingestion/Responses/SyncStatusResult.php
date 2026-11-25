@@ -9,9 +9,7 @@ use App\Ingestion\IngestionResponse;
 
 final readonly class SyncStatusResult implements IngestionResponse
 {
-    public function __construct(public string $syncRunId, public SyncRunStatus $syncStatus, public bool $created)
-    {
-    }
+    public function __construct(public string $syncRunId, public SyncRunStatus $syncStatus, public bool $created) {}
 
     public function status(): int
     {

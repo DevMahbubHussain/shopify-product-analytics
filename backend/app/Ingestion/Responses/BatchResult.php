@@ -8,9 +8,7 @@ use App\Ingestion\IngestionResponse;
 
 final readonly class BatchResult implements IngestionResponse
 {
-    public function __construct(public int $received, public int $written)
-    {
-    }
+    public function __construct(public int $received, public int $written) {}
 
     public function status(): int
     {

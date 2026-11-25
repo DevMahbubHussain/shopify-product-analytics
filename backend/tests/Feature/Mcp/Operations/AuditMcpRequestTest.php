@@ -7,11 +7,14 @@ use App\Jobs\RecordMcpAuditLogJob;
 use App\Mcp\Support\McpTokenService;
 use App\Models\McpConsent;
 use App\Models\Shop;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 
 uses(RefreshDatabase::class);
 
@@ -204,10 +207,10 @@ describe(
 );
 
 /**
- * @param array<string, mixed> $params
- * @param array<string, string> $headers
+ * @param  array<string, mixed>  $params
+ * @param  array<string, string>  $headers
  */
-function auditedMcpCall(string $token, string $method, ?string $name, array $params, array $headers = []): \Illuminate\Testing\TestResponse
+function auditedMcpCall(string $token, string $method, ?string $name, array $params, array $headers = []): TestResponse
 {
     return test()->postJson(
         '/mcp',
@@ -337,9 +340,9 @@ describe(
             'records rate_limited when the per-connection limit is hit', function (): void {
                 Queue::fake([RecordMcpAuditLogJob::class]);
 
-                \Illuminate\Support\Facades\RateLimiter::for(
+                RateLimiter::for(
                     'mcp',
-                    fn (): \Illuminate\Cache\RateLimiting\Limit => \Illuminate\Cache\RateLimiting\Limit::perMinute(1)->by('audit-test'),
+                    fn (): Limit => Limit::perMinute(1)->by('audit-test'),
                 );
 
                 $call = fn () => auditedMcpCall(

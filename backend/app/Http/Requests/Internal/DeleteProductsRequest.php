@@ -15,7 +15,7 @@ final class DeleteProductsRequest extends IngestionRequest
     public function rules(): array
     {
         return [
-            'product_gids' => ['required', 'array', 'list', 'min:1', 'max:' . self::MAX_PRODUCTS],
+            'product_gids' => ['required', 'array', 'list', 'min:1', 'max:'.self::MAX_PRODUCTS],
             'product_gids.*' => [...IngestionRules::gid('Product'), 'distinct'],
         ];
     }
