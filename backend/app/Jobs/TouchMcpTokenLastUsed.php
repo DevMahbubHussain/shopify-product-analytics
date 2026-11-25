@@ -22,6 +22,6 @@ final class TouchMcpTokenLastUsed implements ShouldQueue
     {
         McpToken::query()
             ->where('id', $this->tokenId)
-            ->update(['last_used_at' => $this->usedAt]);
+            ->update(['last_used_at' => McpToken::microsecondTimestamp($this->usedAt)]);
     }
 }

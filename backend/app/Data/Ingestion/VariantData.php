@@ -14,8 +14,7 @@ final readonly class VariantData
         public string $title,
         public ?string $sku,
         public ?DecimalAmount $price,
-    ) {
-    }
+    ) {}
 
     /** @param array{gid: string, title: string, sku?: ?string, price?: ?string} $data */
     public static function fromArray(array $data): self

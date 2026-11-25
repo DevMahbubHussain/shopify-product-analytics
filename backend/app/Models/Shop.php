@@ -6,6 +6,7 @@ namespace App\Models;
 
 use App\Enums\Platform;
 use App\Enums\ShopStatus;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -16,7 +17,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
  * @property string $shop_domain
  * @property ShopStatus $status
  * @property Platform $platform
- * @property-read \Illuminate\Database\Eloquent\Collection<int, Subscription> $subscriptions
+ * @property-read Collection<int, Subscription> $subscriptions
  * @property-read Subscription|null $activeSubscription
  */
 final class Shop extends Model

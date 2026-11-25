@@ -23,8 +23,7 @@ final readonly class ProductData
         public ?CarbonImmutable $publishedAt,
         public CarbonImmutable $shopifyUpdatedAt,
         public array $variants,
-    ) {
-    }
+    ) {}
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self

@@ -14,8 +14,7 @@ final readonly class ProductDetailAnalyticsService
     public function __construct(
         private PeriodComparisonService $periodComparisonService,
         private StoreTimezoneService $timezoneService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>

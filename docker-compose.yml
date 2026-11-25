@@ -111,6 +111,7 @@ services:
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:?Set SHOPIFY_API_SECRET in .env}
       SCOPES: ${SCOPES:?Set SCOPES in .env}
       SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:?Set SHOPIFY_APP_URL in .env}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?Set MCP_PUBLIC_URL in .env}
     depends_on:
       postgres:
         condition: service_healthy

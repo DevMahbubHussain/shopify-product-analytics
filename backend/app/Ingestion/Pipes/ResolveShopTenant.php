@@ -16,10 +16,10 @@ final class ResolveShopTenant
 {
     public function handle(IngestionContext $context, Closure $next): IngestionResponse
     {
-        $shop = Shop::query()->where('shop_domain', $context->shopDomain)->first() ?? throw new UnknownShop();
+        $shop = Shop::query()->where('shop_domain', $context->shopDomain)->first() ?? throw new UnknownShop;
 
         if ($shop->status !== ShopStatus::Active) {
-            throw new InactiveShop();
+            throw new InactiveShop;
         }
 
         $context->shop = $shop;

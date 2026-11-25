@@ -8,6 +8,7 @@ use App\Http\Controllers\Analytics\ProductPerformanceController;
 use App\Http\Controllers\Analytics\SalesTrendController;
 use App\Http\Controllers\Exports\ProductExportController;
 use App\Http\Controllers\Internal\IngestionController;
+use App\Http\Controllers\Internal\McpAuditLogController;
 use App\Http\Controllers\Internal\McpConsentController;
 use App\Http\Controllers\Internal\McpTokenController;
 use App\Http\Controllers\Internal\SubscriptionStatusController;
@@ -29,13 +30,13 @@ $healthCheckHandler = function (): JsonResponse {
 
     try {
         DB::connection()->getPdo();
-    } catch (\Throwable) {
+    } catch (Throwable) {
         $dbOk = false;
     }
 
     try {
         Redis::connection()->ping();
-    } catch (\Throwable) {
+    } catch (Throwable) {
         $redisOk = false;
     }
 
@@ -94,10 +95,10 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(
             '/ping', function (Request $request): JsonResponse {
                 return response()->json(
                     [
-                    'status' => 'ok',
-                    'message' => 'S2S handshake verified successfully.',
-                    'shop_domain' => $request->attributes->get('shop_domain'),
-                    'timestamp' => time(),
+                        'status' => 'ok',
+                        'message' => 'S2S handshake verified successfully.',
+                        'shop_domain' => $request->attributes->get('shop_domain'),
+                        'timestamp' => time(),
                     ]
                 );
             }
@@ -120,6 +121,8 @@ Route::prefix('/internal/v1')->middleware('s2s')->group(
                 Route::get('connections', [McpTokenController::class, 'index']);
                 Route::post('tokens', [McpTokenController::class, 'store']);
                 Route::delete('connections/{id}', [McpTokenController::class, 'destroy'])->whereUuid('id');
+
+                Route::get('audit-logs', [McpAuditLogController::class, 'index']);
             }
         );
 

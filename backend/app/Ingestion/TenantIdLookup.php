@@ -10,7 +10,7 @@ use Stringable;
 final class TenantIdLookup
 {
     /**
-     * @param list<Stringable|string|null> $gids
+     * @param  list<Stringable|string|null>  $gids
      * @return array<string, string> gid => id, limited to rows owned by the shop
      */
     public function byGid(string $table, string $gidColumn, string $shopId, array $gids): array

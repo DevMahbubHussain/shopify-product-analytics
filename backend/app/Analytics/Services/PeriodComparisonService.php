@@ -9,16 +9,12 @@ use Carbon\CarbonImmutable;
 
 final readonly class MetricComparisonResult
 {
-    /**
-     * @param string|int $delta
-     */
     public function __construct(
         public string|int $delta,
         public ?float $percentageChange,
         public string $direction,
         public bool $isNew = false
-    ) {
-    }
+    ) {}
 }
 
 final class PeriodComparisonService

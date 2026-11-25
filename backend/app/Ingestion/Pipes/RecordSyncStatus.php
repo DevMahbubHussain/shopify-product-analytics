@@ -52,7 +52,7 @@ final class RecordSyncStatus
                 ->exists();
 
             if ($alreadyRunning) {
-                throw new SyncRunAlreadyInProgress();
+                throw new SyncRunAlreadyInProgress;
             }
 
             $run = SyncRun::query()->create([
@@ -72,7 +72,7 @@ final class RecordSyncStatus
     private function advance(string $shopId, SyncStatusData $data): SyncStatusResult
     {
         $run = SyncRun::query()->whereKey($data->syncRunId)->where('shop_id', $shopId)->lockForUpdate()->first()
-            ?? throw new UnknownSyncRun();
+            ?? throw new UnknownSyncRun;
 
         if (! $run->status->canTransitionTo($data->status)) {
             throw new IllegalSyncTransition($run->status, $data->status);

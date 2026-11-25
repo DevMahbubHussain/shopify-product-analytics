@@ -13,9 +13,7 @@ use Closure;
 
 final class PurgeShopTenant
 {
-    public function __construct(private readonly TenantPurgeService $purgeService)
-    {
-    }
+    public function __construct(private readonly TenantPurgeService $purgeService) {}
 
     public function handle(IngestionContext $context, Closure $next): IngestionResponse
     {

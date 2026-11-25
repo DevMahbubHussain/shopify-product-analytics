@@ -6,9 +6,9 @@ namespace App\Mcp\Tools\Concerns;
 
 use App\Enums\PlanTier;
 use App\Enums\SyncRunStatus;
-use App\Enums\SyncType;
 use App\Models\Shop;
 use App\Models\SyncRun;
+use App\Services\HistoryStartResolver;
 use App\Services\PlanEntitlementService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
@@ -33,48 +33,7 @@ trait FormatsToolMetadata
 
     protected function resolveHistoryStartDate(Shop $shop): ?string
     {
-        /** @var SyncRun|null $syncRun */
-        $syncRun = SyncRun::query()
-            ->where('shop_id', $shop->id)
-            ->where('status', SyncRunStatus::Completed)
-            ->where('sync_type', SyncType::Initial)
-            ->orderByDesc('completed_at')
-            ->first() ?? SyncRun::query()
-            ->where('shop_id', $shop->id)
-            ->where('status', SyncRunStatus::Completed)
-            ->orderByDesc('completed_at')
-            ->first();
-
-        $candidates = [];
-
-        if ($syncRun !== null && is_array($syncRun->cursor_metadata) && ! empty($syncRun->cursor_metadata['window_start'])) {
-            try {
-                $candidates[] = CarbonImmutable::parse((string) $syncRun->cursor_metadata['window_start'])
-                    ->setTimezone($shop->timezone ?? 'UTC')
-                    ->toDateString();
-            } catch (\Throwable) {
-                // fallback below
-            }
-        } elseif ($shop->installed_at !== null) {
-            $candidates[] = CarbonImmutable::instance($shop->installed_at)
-                ->setTimezone($shop->timezone ?? 'UTC')
-                ->subDays(60)
-                ->toDateString();
-        }
-
-        $minMetricDate = DB::table('product_daily_metrics')
-            ->where('shop_id', $shop->id)
-            ->min('metric_date');
-
-        if ($minMetricDate !== null) {
-            $candidates[] = (string) $minMetricDate;
-        }
-
-        if (empty($candidates)) {
-            return null;
-        }
-
-        return min($candidates);
+        return app(HistoryStartResolver::class)->startDate($shop);
     }
 
     /**

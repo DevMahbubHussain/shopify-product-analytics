@@ -13,8 +13,7 @@ final readonly class ShopData
         public ?ShopifyGid $shopifyShopGid,
         public string $currencyCode,
         public string $timezone,
-    ) {
-    }
+    ) {}
 
     /** @param array{shopify_shop_gid?: ?string, currency_code: string, timezone: string} $data */
     public static function fromArray(string $shopDomain, array $data): self

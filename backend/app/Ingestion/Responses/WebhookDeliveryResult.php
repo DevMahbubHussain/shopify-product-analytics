@@ -8,9 +8,7 @@ use App\Ingestion\IngestionResponse;
 
 final readonly class WebhookDeliveryResult implements IngestionResponse
 {
-    public function __construct(public bool $duplicate)
-    {
-    }
+    public function __construct(public bool $duplicate) {}
 
     public function status(): int
     {

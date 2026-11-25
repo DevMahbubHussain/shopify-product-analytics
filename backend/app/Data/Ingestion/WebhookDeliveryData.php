@@ -14,8 +14,7 @@ final readonly class WebhookDeliveryData
         public string $topic,
         public string $payloadHash,
         public CarbonImmutable $receivedAt,
-    ) {
-    }
+    ) {}
 
     /** @param array{webhook_id: string, topic: string, payload_hash: string, received_at: string} $data */
     public static function fromArray(array $data): self

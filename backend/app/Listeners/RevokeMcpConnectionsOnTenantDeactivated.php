@@ -26,12 +26,12 @@ final class RevokeMcpConnectionsOnTenantDeactivated
                 McpToken::query()
                     ->where('shop_id', $event->shopId)
                     ->whereNull('revoked_at')
-                    ->update(['revoked_at' => $event->deactivatedAt]);
+                    ->update(['revoked_at' => McpToken::microsecondTimestamp($event->deactivatedAt)]);
 
                 McpConsent::query()
                     ->where('shop_id', $event->shopId)
                     ->whereNull('withdrawn_at')
-                    ->update(['withdrawn_at' => $event->deactivatedAt]);
+                    ->update(['withdrawn_at' => McpConsent::microsecondTimestamp($event->deactivatedAt)]);
 
                 return $hashes;
             }, 5

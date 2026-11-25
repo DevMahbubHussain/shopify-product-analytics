@@ -25,7 +25,7 @@ import {
   loadOverviewDashboard,
   type OverviewDashboardData,
 } from "../features/analytics/overviewLoader.server.ts";
-import { DATE_PRESETS } from "../features/analytics/datePresets.ts";
+import { DATE_PRESETS } from "../lib/dates/datePresets.ts";
 import type { MetricComparison } from "../lib/backend/analyticsClient.server.ts";
 import {
   KpiCardsSkeleton,

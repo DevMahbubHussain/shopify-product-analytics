@@ -20,8 +20,7 @@ final readonly class SyncStatusData
         public ?string $errorCode,
         public ?string $errorSummary,
         public ?string $historyNotice,
-    ) {
-    }
+    ) {}
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self

@@ -11,6 +11,5 @@ final readonly class TenantDeactivated
     public function __construct(
         public string $shopId,
         public CarbonImmutable $deactivatedAt,
-    ) {
-    }
+    ) {}
 }

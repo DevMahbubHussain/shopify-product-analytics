@@ -71,10 +71,10 @@ final class ProductExportController
     private function resolveShop(Request $request): Shop
     {
         $shopDomain = (string) $request->attributes->get('shop_domain');
-        $shop = Shop::query()->where('shop_domain', $shopDomain)->first() ?? throw new UnknownShop();
+        $shop = Shop::query()->where('shop_domain', $shopDomain)->first() ?? throw new UnknownShop;
 
         if ($shop->status !== ShopStatus::Active) {
-            throw new InactiveShop();
+            throw new InactiveShop;
         }
 
         return $shop;

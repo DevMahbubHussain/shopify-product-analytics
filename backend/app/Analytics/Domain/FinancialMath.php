@@ -11,7 +11,7 @@ final class FinancialMath
     public const string ZERO = '0.000000';
 
     /**
-     * @param list<array{quantity: int, unit_price: string}> $lineItems
+     * @param  list<array{quantity: int, unit_price: string}>  $lineItems
      */
     public static function grossSales(array $lineItems): string
     {

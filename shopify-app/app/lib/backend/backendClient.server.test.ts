@@ -31,6 +31,17 @@ function expectedGetSignature(
     .digest("hex");
 }
 
+function expectedDeleteSignature(
+  path: string,
+  timestamp: string,
+  nonce: string,
+): string {
+  const emptyHash = createHash("sha256").update("").digest("hex");
+  return createHmac("sha256", secret)
+    .update(`DELETE\n${path}\n${timestamp}\n${nonce}\n${shop}\n${emptyHash}`)
+    .digest("hex");
+}
+
 function stubFetch(response: Response): {
   calls: () => { url: string; init: RequestInit }[];
 } {
@@ -239,5 +250,59 @@ test("getInternal accepts query params object and omits them from canonical sign
   assert.equal(
     headers.get("X-App-Signature"),
     expectedGetSignature("/api/v1/products", timestamp, nonce),
+  );
+});
+
+test("deleteInternal sends a signed DELETE request with empty body hash and contract headers", async () => {
+  const fetchStub = stubFetch(Response.json({ status: "revoked" }));
+  const client = new BackendClient({ baseUrl: "http://backend:8000", secret });
+
+  const result = await client.deleteInternal<{ status: string }>(
+    "/internal/v1/mcp/connections/test-uuid",
+    shop,
+    "corr-del-1",
+  );
+
+  assert.deepEqual(result, { status: "revoked" });
+
+  const [call] = fetchStub.calls();
+  assert.ok(call);
+  assert.equal(
+    call.url,
+    "http://backend:8000/internal/v1/mcp/connections/test-uuid",
+  );
+  assert.equal(call.init.method, "DELETE");
+
+  const headers = new Headers(call.init.headers);
+  const timestamp = headers.get("X-App-Timestamp") ?? "";
+  const nonce = headers.get("X-App-Nonce") ?? "";
+  assert.equal(headers.get("X-App-Shop-Domain"), shop);
+  assert.equal(headers.get("X-Correlation-ID"), "corr-del-1");
+  assert.equal(
+    headers.get("X-App-Signature"),
+    expectedDeleteSignature(
+      "/internal/v1/mcp/connections/test-uuid",
+      timestamp,
+      nonce,
+    ),
+  );
+});
+
+test("deleteInternal throws with the status code on a failed response", async () => {
+  stubFetch(new Response("Not Found", { status: 404 }));
+  const client = new BackendClient({ baseUrl: "http://backend:8000", secret });
+
+  await assert.rejects(
+    () =>
+      client.deleteInternal(
+        "/internal/v1/mcp/connections/missing-uuid",
+        shop,
+      ),
+    (err: unknown) => {
+      assert.ok(err instanceof BackendError);
+      assert.equal(err.status, 404);
+      assert.match(err.message, /Not Found/);
+      return true;
+    },
   );
 });

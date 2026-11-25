@@ -9,13 +9,11 @@ use Stringable;
 
 final readonly class ShopifyGid implements Stringable
 {
-    private function __construct(public string $type, public string $id)
-    {
-    }
+    private function __construct(public string $type, public string $id) {}
 
     public static function pattern(string $type): string
     {
-        return '/^gid:\/\/shopify\/' . preg_quote($type, '/') . '\/[0-9]+$/';
+        return '/^gid:\/\/shopify\/'.preg_quote($type, '/').'\/[0-9]+$/';
     }
 
     public static function parse(string $value, string $expectedType): self

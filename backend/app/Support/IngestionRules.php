@@ -13,19 +13,19 @@ final class IngestionRules
     /** @return list<string> */
     public static function gid(string $type, bool $required = true): array
     {
-        return [$required ? 'required' : 'nullable', 'string', 'max:128', 'regex:' . ShopifyGid::pattern($type)];
+        return [$required ? 'required' : 'nullable', 'string', 'max:128', 'regex:'.ShopifyGid::pattern($type)];
     }
 
     /** @return list<string> */
     public static function amount(bool $required = true): array
     {
-        return [$required ? 'required' : 'nullable', 'string', 'regex:' . DecimalAmount::PATTERN];
+        return [$required ? 'required' : 'nullable', 'string', 'regex:'.DecimalAmount::PATTERN];
     }
 
     /** @return list<string> */
     public static function timestamp(bool $required = true): array
     {
-        return [$required ? 'required' : 'nullable', 'string', 'regex:' . self::TIMESTAMP_PATTERN, 'date'];
+        return [$required ? 'required' : 'nullable', 'string', 'regex:'.self::TIMESTAMP_PATTERN, 'date'];
     }
 
     /** @return list<string> */

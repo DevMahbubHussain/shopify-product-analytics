@@ -10,6 +10,7 @@ use App\Http\Resources\Mcp\McpConsentResource;
 use App\Models\McpConsent;
 use App\Models\McpToken;
 use App\Models\Shop;
+use App\Services\HistoryStartResolver;
 use App\Services\PlanEntitlementService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -24,6 +25,7 @@ final class McpConsentController
 
     public function __construct(
         private readonly PlanEntitlementService $planService,
+        private readonly HistoryStartResolver $historyStart,
     ) {}
 
     public function status(Request $request): JsonResponse
@@ -56,6 +58,11 @@ final class McpConsentController
                 'counts' => [
                     'active_tokens' => $activeTokensCount,
                     'active_oauth_grants' => 0,
+                ],
+                'store' => [
+                    'timezone' => $shop->timezone ?? 'UTC',
+                    'currency_code' => $shop->currency_code,
+                    'history_start' => $this->historyStart->startDate($shop),
                 ],
             ]
         );
@@ -124,12 +131,12 @@ final class McpConsentController
                 McpConsent::query()
                     ->where('shop_id', $shop->id)
                     ->active()
-                    ->update(['withdrawn_at' => $now]);
+                    ->update(['withdrawn_at' => McpConsent::microsecondTimestamp($now)]);
 
                 McpToken::query()
                     ->where('shop_id', $shop->id)
                     ->active()
-                    ->update(['revoked_at' => $now]);
+                    ->update(['revoked_at' => McpToken::microsecondTimestamp($now)]);
 
                 return $hashes;
             }, 5

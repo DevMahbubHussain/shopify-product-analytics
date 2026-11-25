@@ -27,7 +27,7 @@ function generateS2SSignature(
     string $body,
     string $secret = TEST_S2S_SECRET,
 ): string {
-    $payload = strtoupper($method) . "\n" . $path . "\n" . $timestamp . "\n" . $nonce . "\n" . $shopDomain . "\n" . hash('sha256', $body);
+    $payload = strtoupper($method)."\n".$path."\n".$timestamp."\n".$nonce."\n".$shopDomain."\n".hash('sha256', $body);
 
     return hash_hmac('sha256', $payload, $secret);
 }

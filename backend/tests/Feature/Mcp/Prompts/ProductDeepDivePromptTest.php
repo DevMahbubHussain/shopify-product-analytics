@@ -10,6 +10,7 @@ use App\Models\Shop;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 
 uses(RefreshDatabase::class);
 
@@ -224,7 +225,7 @@ describe(
 );
 
 /** @param array<string, mixed> $arguments */
-function deepDivePromptGet(string $token, array $arguments): \Illuminate\Testing\TestResponse
+function deepDivePromptGet(string $token, array $arguments): TestResponse
 {
     return test()->postJson('/mcp', [
         'jsonrpc' => '2.0',

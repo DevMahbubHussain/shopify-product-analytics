@@ -29,7 +29,7 @@ final class IngestOrdersRequest extends IngestionRequest
             'orders.*.processed_at' => IngestionRules::timestamp(required: false),
             'orders.*.cancelled_at' => IngestionRules::timestamp(required: false),
             'orders.*.shopify_updated_at' => IngestionRules::timestamp(),
-            'orders.*.line_items' => ['required', 'array', 'min:1', 'max:' . self::MAX_LINE_ITEMS],
+            'orders.*.line_items' => ['required', 'array', 'min:1', 'max:'.self::MAX_LINE_ITEMS],
             'orders.*.line_items.*.gid' => [...IngestionRules::gid('LineItem'), 'distinct'],
             'orders.*.line_items.*.product_gid' => IngestionRules::gid('Product', required: false),
             'orders.*.line_items.*.variant_gid' => IngestionRules::gid('ProductVariant', required: false),
@@ -53,7 +53,7 @@ final class IngestOrdersRequest extends IngestionRequest
             $lineCount = is_array($orders) ? array_sum(array_map(fn (mixed $o): int => is_array($o['line_items'] ?? null) ? count($o['line_items']) : 0, $orders)) : 0;
 
             if ($lineCount > self::MAX_LINE_ITEMS) {
-                $validator->errors()->add('orders', 'A batch may contain at most ' . self::MAX_LINE_ITEMS . " line items in total; got {$lineCount}.");
+                $validator->errors()->add('orders', 'A batch may contain at most '.self::MAX_LINE_ITEMS." line items in total; got {$lineCount}.");
             }
         }];
     }

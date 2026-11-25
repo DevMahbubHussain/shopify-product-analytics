@@ -38,7 +38,7 @@ it('returns 503 and degraded status when database is unreachable', function (): 
     DB::partialMock()
         ->shouldReceive('connection->getPdo')
         ->once()
-        ->andThrow(new \PDOException('Database connection refused'));
+        ->andThrow(new PDOException('Database connection refused'));
 
     $response = $this->getJson('/healthz');
 
@@ -53,7 +53,7 @@ it('returns 503 and degraded status when database is unreachable', function (): 
 it('returns 503 and degraded status when redis is unreachable', function (): void {
     Redis::shouldReceive('connection->ping')
         ->once()
-        ->andThrow(new \RedisException('Redis server down'));
+        ->andThrow(new RedisException('Redis server down'));
 
     $response = $this->getJson('/healthz');
 

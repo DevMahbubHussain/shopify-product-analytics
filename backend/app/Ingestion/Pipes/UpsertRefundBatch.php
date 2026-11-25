@@ -26,8 +26,7 @@ final class UpsertRefundBatch
         private readonly TenantIdLookup $lookup,
         private readonly StoreTimezoneService $timezoneService,
         private readonly OutboxService $outboxService,
-    ) {
-    }
+    ) {}
 
     public function handle(IngestionContext $context, Closure $next): IngestionResponse
     {
@@ -126,7 +125,7 @@ final class UpsertRefundBatch
     }
 
     /**
-     * @param list<string> $orderIds
+     * @param  list<string>  $orderIds
      */
     private function lockParentOrders(string $shopId, array $orderIds): void
     {
@@ -146,7 +145,7 @@ final class UpsertRefundBatch
     }
 
     /**
-     * @param list<string> $refundGids
+     * @param  list<string>  $refundGids
      * @return array<string, array{product_id: string, metric_date: string}>
      */
     private function captureBucketsByRefundGids(string $shopId, array $refundGids, ?string $timezone): array
@@ -185,8 +184,8 @@ final class UpsertRefundBatch
     }
 
     /**
-     * @param array<string, array{product_id: string, metric_date: string}> $pre
-     * @param array<string, array{product_id: string, metric_date: string}> $post
+     * @param  array<string, array{product_id: string, metric_date: string}>  $pre
+     * @param  array<string, array{product_id: string, metric_date: string}>  $post
      * @return list<array{product_id: string, metric_date: string}>
      */
     private function mergeBuckets(array $pre, array $post): array

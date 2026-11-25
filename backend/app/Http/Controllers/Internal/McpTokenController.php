@@ -32,6 +32,7 @@ final class McpTokenController
 
         $tokens = McpToken::query()
             ->where('shop_id', $shop->id)
+            ->active()
             ->latest('created_at')
             ->get();
 

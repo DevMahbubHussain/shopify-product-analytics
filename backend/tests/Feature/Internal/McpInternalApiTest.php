@@ -2,9 +2,17 @@
 
 declare(strict_types=1);
 
+use App\Enums\SyncRunStatus;
+use App\Enums\SyncType;
+use App\Events\TenantDeactivated;
+use App\Jobs\TouchMcpTokenLastUsed;
+use App\Listeners\RevokeMcpConnectionsOnTenantDeactivated;
 use App\Models\McpConsent;
 use App\Models\McpToken;
 use App\Models\Shop;
+use App\Models\SyncRun;
+use Carbon\Carbon;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -28,6 +36,12 @@ function s2sDelete(string $path, string $shopDomain = 'acme.myshopify.com'): Tes
         'HTTP_X_APP_NONCE' => $nonce,
         'HTTP_X_APP_SIGNATURE' => hash_hmac('sha256', $canonical, INGESTION_TEST_SECRET),
     ]);
+}
+
+function microsOf(string $table, string $column, string $id): ?string
+{
+    return DB::table($table)->where('id', $id)
+        ->value(DB::raw("to_char({$column} AT TIME ZONE 'UTC', 'US')"));
 }
 
 function enableProPlan(string $shopId): void
@@ -223,6 +237,23 @@ describe('Internal S2S MCP Management API', function (): void {
         }
     });
 
+    it('excludes revoked and expired tokens from the connections list', function (): void {
+        enableProPlan($this->shopId);
+        s2sPost('/internal/v1/mcp/consent', ['staff_ref' => 'staff_1', 'policy_version' => 'v1.0']);
+
+        $keep = s2sPost('/internal/v1/mcp/tokens', ['name' => 'Active', 'staff_ref' => 'staff_1'])->json('token.id');
+        $revoked = s2sPost('/internal/v1/mcp/tokens', ['name' => 'Revoked', 'staff_ref' => 'staff_1'])->json('token.id');
+        $expired = s2sPost('/internal/v1/mcp/tokens', ['name' => 'Expired', 'staff_ref' => 'staff_1'])->json('token.id');
+
+        s2sDelete("/internal/v1/mcp/connections/{$revoked}")->assertOk();
+        McpToken::query()->whereKey($expired)->update(['expires_at' => now()->subMinute()]);
+
+        s2sGet('/internal/v1/mcp/connections')
+            ->assertOk()
+            ->assertJsonCount(1, 'tokens')
+            ->assertJsonPath('tokens.0.id', $keep);
+    });
+
     it('returns 404 for a malformed non-uuid connection ID on DELETE', function (): void {
         s2sDelete('/internal/v1/mcp/connections/not-a-uuid')
             ->assertStatus(404);
@@ -348,5 +379,134 @@ describe('Internal S2S MCP Management API', function (): void {
             ->assertStatus(404);
 
         expect(McpToken::find($token)->isRevoked())->toBeFalse();
+    });
+});
+
+describe('MCP timestamp precision', function (): void {
+    beforeEach(function (): void {
+        $this->instant = CarbonImmutable::parse('2026-11-25 10:00:00.123456', 'UTC');
+        CarbonImmutable::setTestNow($this->instant);
+        Carbon::setTestNow($this->instant);
+        enableProPlan($this->shopId);
+    });
+
+    afterEach(function (): void {
+        CarbonImmutable::setTestNow();
+        Carbon::setTestNow();
+    });
+
+    it('keeps microseconds on consent grant and token creation', function (): void {
+        $consentId = s2sPost('/internal/v1/mcp/consent', ['staff_ref' => 'staff_1', 'policy_version' => 'v1.0'])
+            ->assertCreated()->json('consent.id');
+        $tokenId = s2sPost('/internal/v1/mcp/tokens', ['name' => 'Precise', 'staff_ref' => 'staff_1'])
+            ->assertCreated()->json('token.id');
+
+        expect(microsOf('mcp_consents', 'granted_at', $consentId))->toBe('123456')
+            ->and(microsOf('mcp_consents', 'created_at', $consentId))->toBe('123456')
+            ->and(microsOf('mcp_tokens', 'created_at', $tokenId))->toBe('123456');
+    });
+
+    it('keeps microseconds on single token revoke and on consent withdrawal', function (): void {
+        s2sPost('/internal/v1/mcp/consent', ['staff_ref' => 'staff_1', 'policy_version' => 'v1.0']);
+        $revokedId = s2sPost('/internal/v1/mcp/tokens', ['name' => 'One', 'staff_ref' => 'staff_1'])->json('token.id');
+        $bulkId = s2sPost('/internal/v1/mcp/tokens', ['name' => 'Two', 'staff_ref' => 'staff_1'])->json('token.id');
+
+        s2sDelete("/internal/v1/mcp/connections/{$revokedId}")->assertOk();
+        s2sDelete('/internal/v1/mcp/consent')->assertOk();
+
+        $consentId = (string) DB::table('mcp_consents')->where('shop_id', $this->shopId)->value('id');
+
+        expect(microsOf('mcp_tokens', 'revoked_at', $revokedId))->toBe('123456')
+            ->and(microsOf('mcp_tokens', 'revoked_at', $bulkId))->toBe('123456')
+            ->and(microsOf('mcp_consents', 'withdrawn_at', $consentId))->toBe('123456');
+    });
+
+    it('keeps microseconds when recording last use and on tenant deactivation', function (): void {
+        s2sPost('/internal/v1/mcp/consent', ['staff_ref' => 'staff_1', 'policy_version' => 'v1.0']);
+        $tokenId = s2sPost('/internal/v1/mcp/tokens', ['name' => 'Used', 'staff_ref' => 'staff_1'])->json('token.id');
+
+        (new TouchMcpTokenLastUsed($tokenId, $this->instant))->handle();
+        (new RevokeMcpConnectionsOnTenantDeactivated)->handle(new TenantDeactivated($this->shopId, $this->instant));
+
+        $consentId = (string) DB::table('mcp_consents')->where('shop_id', $this->shopId)->value('id');
+
+        expect(microsOf('mcp_tokens', 'last_used_at', $tokenId))->toBe('123456')
+            ->and(microsOf('mcp_tokens', 'revoked_at', $tokenId))->toBe('123456')
+            ->and(microsOf('mcp_consents', 'withdrawn_at', $consentId))->toBe('123456');
+    });
+});
+
+describe('MCP status store context', function (): void {
+    function completedInitialSync(string $shopId, string $windowStart): void
+    {
+        SyncRun::query()->create([
+            'shop_id' => $shopId,
+            'sync_type' => SyncType::Initial,
+            'status' => SyncRunStatus::Completed,
+            'started_at' => now()->subHour(),
+            'completed_at' => now(),
+            'cursor_metadata' => ['window_start' => $windowStart],
+        ]);
+    }
+
+    function dailyMetricOn(string $shopId, string $metricDate): void
+    {
+        $productId = (string) Str::uuid();
+        DB::table('products')->insert([
+            'id' => $productId,
+            'shop_id' => $shopId,
+            'shopify_product_gid' => 'gid://shopify/Product/'.random_int(1000, 9999),
+            'title' => 'Seeded',
+            'handle' => 'seeded-'.random_int(1000, 9999),
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('product_daily_metrics')->insert([
+            'id' => (string) Str::uuid(),
+            'shop_id' => $shopId,
+            'product_id' => $productId,
+            'metric_date' => $metricDate,
+            'currency_code' => 'USD',
+            'gross_sales' => '10.000000',
+            'discounts' => '0.000000',
+            'refunds' => '0.000000',
+            'net_sales' => '10.000000',
+            'units_sold' => 1,
+            'order_count' => 1,
+            'calculated_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    it('returns timezone, currency and the sync window start in store time', function (): void {
+        completedInitialSync($this->shopId, '2026-09-26T04:00:00Z');
+
+        s2sGet('/internal/v1/mcp/status')
+            ->assertOk()
+            ->assertJsonPath('store.timezone', 'America/New_York')
+            ->assertJsonPath('store.currency_code', 'USD')
+            ->assertJsonPath('store.history_start', '2026-09-26');
+    });
+
+    it('converts a window start just after UTC midnight to the previous store day', function (): void {
+        completedInitialSync($this->shopId, '2026-09-26T02:00:00Z');
+
+        s2sGet('/internal/v1/mcp/status')->assertJsonPath('store.history_start', '2026-09-25');
+    });
+
+    it('uses the earliest metric date when it is before the sync window', function (): void {
+        completedInitialSync($this->shopId, '2026-09-26T04:00:00Z');
+        dailyMetricOn($this->shopId, '2026-09-20');
+
+        s2sGet('/internal/v1/mcp/status')->assertJsonPath('store.history_start', '2026-09-20');
+    });
+
+    it('falls back to sixty days before install in store time when no sync has completed', function (): void {
+        $installedAt = CarbonImmutable::parse((string) DB::table('shops')->where('id', $this->shopId)->value('installed_at'));
+        $expected = $installedAt->setTimezone('America/New_York')->subDays(60)->toDateString();
+
+        s2sGet('/internal/v1/mcp/status')->assertJsonPath('store.history_start', $expected);
     });
 });

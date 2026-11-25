@@ -20,6 +20,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Dashboard</s-link>
         <s-link href="/app/pricing">Plans & Billing</s-link>
+        <s-link href="/app/mcp">AI & MCP</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

@@ -7,7 +7,6 @@ namespace Tests\Feature\Ingestion;
 use App\Analytics\Services\StoreTimezoneService;
 use App\Events\OrdersIngested;
 use App\Jobs\AggregateProductDailyMetricsJob;
-use App\Listeners\QueueMetricAggregationsFromOrders;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;

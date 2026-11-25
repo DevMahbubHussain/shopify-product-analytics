@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Internal;
 
 use App\Http\Requests\Internal\DeleteProductsRequest;
+use App\Http\Requests\Internal\IngestionRequest;
 use App\Http\Requests\Internal\IngestOrdersRequest;
 use App\Http\Requests\Internal\IngestProductsRequest;
 use App\Http\Requests\Internal\IngestRefundsRequest;
 use App\Http\Requests\Internal\IngestShopRequest;
 use App\Http\Requests\Internal\IngestSubscriptionRequest;
-use App\Http\Requests\Internal\IngestionRequest;
 use App\Http\Requests\Internal\RecordWebhookDeliveryRequest;
 use App\Http\Requests\Internal\ReportSyncStatusRequest;
 use App\Http\Requests\Internal\ShopRedactRequest;

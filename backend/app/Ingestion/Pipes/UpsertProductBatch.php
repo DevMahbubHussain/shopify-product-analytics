@@ -15,9 +15,7 @@ use Illuminate\Support\Facades\DB;
 
 final class UpsertProductBatch
 {
-    public function __construct(private readonly GuardedUpsert $upsert)
-    {
-    }
+    public function __construct(private readonly GuardedUpsert $upsert) {}
 
     public function handle(IngestionContext $context, Closure $next): IngestionResponse
     {
@@ -68,7 +66,7 @@ final class UpsertProductBatch
     /**
      * Variants of stale (skipped) products are skipped with them.
      *
-     * @param array<string, string> $productIds
+     * @param  array<string, string>  $productIds
      * @return list<array<string, mixed>>
      */
     private function variantRows(string $shopId, ProductBatch $batch, array $productIds): array

@@ -17,16 +17,15 @@ final class SubscriptionStatusController
 {
     public function __construct(
         private readonly PlanEntitlementService $planService,
-    ) {
-    }
+    ) {}
 
     public function show(Request $request): JsonResponse
     {
         $shopDomain = (string) $request->attributes->get('shop_domain');
-        $shop = Shop::query()->where('shop_domain', $shopDomain)->first() ?? throw new UnknownShop();
+        $shop = Shop::query()->where('shop_domain', $shopDomain)->first() ?? throw new UnknownShop;
 
         if ($shop->status !== ShopStatus::Active) {
-            throw new InactiveShop();
+            throw new InactiveShop;
         }
 
         $tier = $this->planService->resolvePlan($shop);

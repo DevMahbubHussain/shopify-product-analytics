@@ -15,8 +15,7 @@ final class DispatchIngestedEvents
 {
     public function __construct(
         private readonly OutboxService $outboxService,
-    ) {
-    }
+    ) {}
 
     public function handle(IngestionContext $context, Closure $next): IngestionResponse
     {

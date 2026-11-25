@@ -11,6 +11,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 
 uses(RefreshDatabase::class);
 
@@ -221,7 +222,7 @@ describe(
 );
 
 /** @param array<string, mixed> $arguments */
-function weeklyBriefPromptGet(string $token, array $arguments): \Illuminate\Testing\TestResponse
+function weeklyBriefPromptGet(string $token, array $arguments): TestResponse
 {
     return test()->postJson('/mcp', [
         'jsonrpc' => '2.0',
@@ -266,7 +267,7 @@ describe('WeeklyExecutiveBriefPrompt hardening', function (): void {
     })->with(['natural language' => ['+5 years'], 'impossible date' => ['2026-02-30'], 'garbage' => ['abc']]);
 
     it('rejects an end_date in the future', function (): void {
-        $tomorrow = \Carbon\CarbonImmutable::now($this->shop->timezone ?? 'UTC')->addDay()->toDateString();
+        $tomorrow = CarbonImmutable::now($this->shop->timezone ?? 'UTC')->addDay()->toDateString();
 
         weeklyBriefPromptGet($this->generatedToken->plaintextToken, ['end_date' => $tomorrow])
             ->assertJsonPath('error.code', -32602);

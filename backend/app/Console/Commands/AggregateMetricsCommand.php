@@ -87,10 +87,10 @@ final class AggregateMetricsCommand extends Command
                 }
             }
 
-            $this->info('Found ' . count($dispatched) . " distinct (product, date) aggregations for {$shop->shop_domain}.");
+            $this->info('Found '.count($dispatched)." distinct (product, date) aggregations for {$shop->shop_domain}.");
         }
 
-        $this->info('Completed metrics aggregation' . ($runNow ? ' synchronously.' : ' dispatch to queue. Total: ' . $totalDispatched));
+        $this->info('Completed metrics aggregation'.($runNow ? ' synchronously.' : ' dispatch to queue. Total: '.$totalDispatched));
 
         return self::SUCCESS;
     }

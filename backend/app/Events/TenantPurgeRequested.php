@@ -8,6 +8,5 @@ final readonly class TenantPurgeRequested
 {
     public function __construct(
         public string $shopId,
-    ) {
-    }
+    ) {}
 }

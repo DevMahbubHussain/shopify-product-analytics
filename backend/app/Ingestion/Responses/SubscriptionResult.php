@@ -12,8 +12,7 @@ final readonly class SubscriptionResult implements IngestionResponse
         public string $status,
         public string $planKey,
         public string $subscriptionStatus,
-    ) {
-    }
+    ) {}
 
     public function status(): int
     {

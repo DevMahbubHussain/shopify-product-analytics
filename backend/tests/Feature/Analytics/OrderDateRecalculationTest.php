@@ -2,13 +2,9 @@
 
 declare(strict_types=1);
 
-use App\Events\OrdersIngested;
 use App\Jobs\AggregateProductDailyMetricsJob;
-use App\Listeners\QueueMetricAggregationsFromOrders;
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 
 uses(RefreshDatabase::class);

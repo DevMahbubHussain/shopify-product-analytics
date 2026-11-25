@@ -27,8 +27,7 @@ final class UpsertOrderBatch
         private readonly TenantIdLookup $lookup,
         private readonly StoreTimezoneService $timezoneService,
         private readonly OutboxService $outboxService,
-    ) {
-    }
+    ) {}
 
     public function handle(IngestionContext $context, Closure $next): IngestionResponse
     {
@@ -111,8 +110,8 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param list<OrderData> $orders
-     * @param array<string, string> $orderIds
+     * @param  list<OrderData>  $orders
+     * @param  array<string, string>  $orderIds
      * @return list<array<string, mixed>>
      */
     private function lineItemRows(string $shopId, array $orders, array $orderIds): array
@@ -147,9 +146,9 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param list<OrderData> $writtenOrders
-     * @param array<string, string> $orderIds
-     * @param array<string, ?CarbonImmutable> $preExistingOrderTimestamps
+     * @param  list<OrderData>  $writtenOrders
+     * @param  array<string, string>  $orderIds
+     * @param  array<string, ?CarbonImmutable>  $preExistingOrderTimestamps
      */
     private function pruneRemovedLineItems(
         string $shopId,
@@ -191,7 +190,7 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param list<string> $incomingGids
+     * @param  list<string>  $incomingGids
      */
     private function lockExistingOrders(string $shopId, array $incomingGids): void
     {
@@ -208,7 +207,7 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param list<string> $orderGids
+     * @param  list<string>  $orderGids
      * @return array<string, ?CarbonImmutable>
      */
     private function captureOrderTimestampsByGids(string $shopId, array $orderGids): array
@@ -226,7 +225,7 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param list<string> $orderGids
+     * @param  list<string>  $orderGids
      * @return array<string, array{product_id: string, metric_date: string}>
      */
     private function captureBucketsByOrderGids(string $shopId, array $orderGids, ?string $timezone): array
@@ -254,7 +253,7 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param list<string> $orderIds
+     * @param  list<string>  $orderIds
      * @return array<string, array{product_id: string, metric_date: string}>
      */
     private function captureBucketsByOrderIds(string $shopId, array $orderIds, ?string $timezone): array
@@ -282,7 +281,7 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param iterable<object> $lines
+     * @param  iterable<object>  $lines
      * @return array<string, array{product_id: string, metric_date: string}>
      */
     private function formatBuckets(iterable $lines, ?string $timezone): array
@@ -302,8 +301,8 @@ final class UpsertOrderBatch
     }
 
     /**
-     * @param array<string, array{product_id: string, metric_date: string}> $pre
-     * @param array<string, array{product_id: string, metric_date: string}> $post
+     * @param  array<string, array{product_id: string, metric_date: string}>  $pre
+     * @param  array<string, array{product_id: string, metric_date: string}>  $post
      * @return list<array{product_id: string, metric_date: string}>
      */
     private function mergeBuckets(array $pre, array $post): array
